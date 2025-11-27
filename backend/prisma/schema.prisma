@@ -1,66 +1,81 @@
-// prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL") // ✔ en Prisma 6 SÍ va aquí
 }
 
-
-// =========================
-//  MODELOS BASE DE SEGURIDAD
-// =========================
-
 model User {
-  id           Int           @id @default(autoincrement())
-  email        String        @unique
+  id           Int        @id @default(autoincrement())
+  email        String     @unique
   passwordHash String
   name         String
-  isActive     Boolean       @default(true)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-
-  // Relaciones
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
   roles        UserRole[]
+  tickets      Ticket[]
 }
 
 model Role {
-  id          Int             @id @default(autoincrement())
-  name        String          @unique
+  id          Int              @id @default(autoincrement())
+  name        String           @unique
   description String?
-
   users       UserRole[]
   permissions RolePermission[]
 }
 
 model Permission {
-  id          Int             @id @default(autoincrement())
-  name        String          @unique
+  id          Int              @id @default(autoincrement())
+  name        String           @unique
   description String?
-
   roles       RolePermission[]
 }
 
-// Tabla pivote para relación muchos-a-muchos User <-> Role
 model UserRole {
   userId Int
   roleId Int
-
   user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
   role   Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@id([userId, roleId])
 }
 
-// Tabla pivote para relación muchos-a-muchos Role <-> Permission
 model RolePermission {
   roleId       Int
   permissionId Int
-
-  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@id([roleId, permissionId])
+}
+
+model Ticket {
+  id          Int            @id @default(autoincrement())
+  title       String
+  description String
+  status      TicketStatus   @default(PENDING)
+  priority    TicketPriority @default(MEDIUM)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // Relación con usuario creador
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
+}
+
+enum TicketStatus {
+  PENDING
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
 }
