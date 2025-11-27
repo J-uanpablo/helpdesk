@@ -4,19 +4,26 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL") // ✔ en Prisma 6 SÍ va aquí
+  url      = env("DATABASE_URL")
 }
 
 model User {
-  id           Int        @id @default(autoincrement())
-  email        String     @unique
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
   passwordHash String
   name         String
-  isActive     Boolean    @default(true)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  roles        UserRole[]
-  tickets      Ticket[]
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Roles y permisos
+  roles           UserRole[]
+  // Tickets que el usuario creó
+  ticketsCreated  Ticket[]        @relation("TicketCreatedBy")
+  // Tickets que le han sido asignados como agente de soporte
+  ticketsAssigned Ticket[]        @relation("TicketAssignedTo")
+  // Cambios realizados por este usuario en tickets
+  historyChanges  TicketHistory[] @relation("TicketHistoryChangedBy")
 }
 
 model Role {
@@ -61,9 +68,33 @@ model Ticket {
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
-  // Relación con usuario creador
-  userId Int
-  user   User @relation(fields: [userId], references: [id])
+  // Usuario que creó el ticket
+  createdById Int
+  createdBy   User @relation("TicketCreatedBy", fields: [createdById], references: [id])
+
+  // Usuario asignado (agente de soporte) - opcional
+  assignedToId Int?
+  assignedTo   User? @relation("TicketAssignedTo", fields: [assignedToId], references: [id])
+
+  // Historial de cambios del ticket
+  history TicketHistory[]
+}
+
+model TicketHistory {
+  id       Int    @id @default(autoincrement())
+  ticketId Int
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  changedById Int
+  changedBy   User @relation("TicketHistoryChangedBy", fields: [changedById], references: [id])
+
+  fromStatus       TicketStatus?
+  toStatus         TicketStatus?
+  fromAssignedToId Int?
+  toAssignedToId   Int?
+
+  note      String?
+  createdAt DateTime @default(now())
 }
 
 enum TicketStatus {
