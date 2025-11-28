@@ -15,11 +15,14 @@ import { RolesGuard } from '../auth/roles.guard';
 import { TicketsService } from './tickets.service';
 import { UpdateStatusDto } from './dto/update-status.dto';
 import { AssignTicketDto } from './dto/assign-ticket.dto';
+import { CreateMessageDto } from './dto/create-message.dto';
 
 @Controller('tickets')
 @UseGuards(JwtAuthGuard)
 export class TicketsController {
   constructor(private readonly ticketsService: TicketsService) {}
+
+  // ================== TICKETS BÁSICOS ==================
 
   // Crear ticket
   @Post()
@@ -41,7 +44,7 @@ export class TicketsController {
     return this.ticketsService.findAll();
   }
 
-  // Ver un ticket (admin, soporte o dueño)
+  // Ver un ticket concreto
   @Get(':id')
   async findOne(@Req() req: any, @Param('id') id: string) {
     const ticket = await this.ticketsService.findOne(Number(id));
@@ -52,9 +55,10 @@ export class TicketsController {
 
     const isAdminOrSupport =
       req.user.roles.includes('admin') || req.user.roles.includes('support');
-    const isOwner = ticket.createdById === req.user.id; // 👈 aquí el cambio
+    const isOwner = ticket.createdById === req.user.id;
+    const isAssigned = ticket.assignedToId === req.user.id;
 
-    if (!isAdminOrSupport && !isOwner) {
+    if (!isAdminOrSupport && !isOwner && !isAssigned) {
       return { message: 'No autorizado' };
     }
 
@@ -101,5 +105,55 @@ export class TicketsController {
   @Roles('support', 'admin', 'auditor')
   getHistory(@Param('id') id: string) {
     return this.ticketsService.getHistory(Number(id));
+  }
+
+  // ================== CHAT INTERNO ==================
+
+  // Enviar mensaje al chat del ticket
+  @Post(':id/messages')
+  async addMessage(
+    @Param('id') id: string,
+    @Body() dto: CreateMessageDto,
+    @Req() req: any,
+  ) {
+    const ticketId = Number(id);
+    const ticket = await this.ticketsService.findOne(ticketId);
+
+    if (!ticket) {
+      return { message: 'Ticket no existe' };
+    }
+
+    const isAdminOrSupport =
+      req.user.roles.includes('admin') || req.user.roles.includes('support');
+    const isOwner = ticket.createdById === req.user.id;
+    const isAssigned = ticket.assignedToId === req.user.id;
+
+    if (!isAdminOrSupport && !isOwner && !isAssigned) {
+      return { message: 'No autorizado para escribir en este ticket' };
+    }
+
+    return this.ticketsService.addMessage(ticketId, req.user.id, dto.content);
+  }
+
+  // Listar mensajes del chat del ticket
+  @Get(':id/messages')
+  async getMessages(@Param('id') id: string, @Req() req: any) {
+    const ticketId = Number(id);
+    const ticket = await this.ticketsService.findOne(ticketId);
+
+    if (!ticket) {
+      return { message: 'Ticket no existe' };
+    }
+
+    const isAdminOrSupport =
+      req.user.roles.includes('admin') || req.user.roles.includes('support');
+    const isOwner = ticket.createdById === req.user.id;
+    const isAssigned = ticket.assignedToId === req.user.id;
+
+    if (!isAdminOrSupport && !isOwner && !isAssigned) {
+      return { message: 'No autorizado para ver este chat' };
+    }
+
+    return this.ticketsService.getMessages(ticketId);
   }
 }

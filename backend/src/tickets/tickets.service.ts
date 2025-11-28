@@ -1,5 +1,5 @@
 // src/tickets/tickets.service.ts
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { TicketPriority, TicketStatus } from '@prisma/client';
 
@@ -7,114 +7,116 @@ import { TicketPriority, TicketStatus } from '@prisma/client';
 export class TicketsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // Crear ticket: guarda en createdById
-  create(
-    data: { title: string; description: string; priority?: TicketPriority },
+  // ================== TICKETS BÁSICOS ==================
+
+  // Crear ticket
+  async create(
+    data: {
+      title: string;
+      description: string;
+      priority?: TicketPriority | string;
+    },
     userId: number,
   ) {
+    const priority =
+      typeof data.priority === 'string'
+        ? (data.priority as TicketPriority)
+        : (data.priority ?? TicketPriority.MEDIUM);
+
     return this.prisma.ticket.create({
       data: {
         title: data.title,
         description: data.description,
-        priority: data.priority ?? TicketPriority.MEDIUM,
-        createdById: userId, // 👈 antes era userId
+        priority,
+        createdById: userId,
       },
     });
   }
 
-  // Mis tickets = los que YO creé
-  findMy(userId: number) {
+  // Ver mis tickets
+  async findMy(userId: number) {
     return this.prisma.ticket.findMany({
-      where: { createdById: userId }, // 👈 antes where: { userId }
+      where: { createdById: userId },
       orderBy: { createdAt: 'desc' },
     });
   }
 
-  findAll() {
+  // Ver todos los tickets (admin/soporte)
+  async findAll() {
     return this.prisma.ticket.findMany({
       orderBy: { createdAt: 'desc' },
     });
   }
 
-  findOne(id: number) {
+  // Buscar un ticket por id
+  async findOne(id: number) {
     return this.prisma.ticket.findUnique({
       where: { id },
     });
   }
 
-  // Cambiar estado
+  // Cambiar estado de un ticket
   async updateStatus(
     ticketId: number,
-    newStatus: TicketStatus,
-    userId: number,
+    status: TicketStatus | string,
+    changedById: number,
     note?: string,
   ) {
     const ticket = await this.prisma.ticket.findUnique({
       where: { id: ticketId },
     });
+    if (!ticket) return null;
 
-    if (!ticket) {
-      throw new NotFoundException('Ticket no encontrado');
-    }
+    const newStatus =
+      typeof status === 'string' ? (status as TicketStatus) : status;
 
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const updatedTicket = await tx.ticket.update({
-        where: { id: ticketId },
-        data: { status: newStatus },
-      });
+    const updated = await this.prisma.ticket.update({
+      where: { id: ticketId },
+      data: { status: newStatus },
+    });
 
-      await tx.ticketHistory.create({
-        data: {
-          ticketId,
-          changedById: userId,
-          fromStatus: ticket.status,
-          toStatus: newStatus,
-          fromAssignedToId: ticket.assignedToId,
-          toAssignedToId: ticket.assignedToId,
-          note,
-        },
-      });
-
-      return updatedTicket;
+    await this.prisma.ticketHistory.create({
+      data: {
+        ticketId,
+        changedById,
+        fromStatus: ticket.status,
+        toStatus: newStatus,
+        fromAssignedToId: ticket.assignedToId,
+        toAssignedToId: ticket.assignedToId,
+        note: note ?? null,
+      },
     });
 
     return updated;
   }
 
-  // Asignar ticket a un agente
+  // Asignar ticket a un usuario
   async assignTicket(
     ticketId: number,
     assignedToId: number,
-    currentUserId: number,
+    changedById: number,
     note?: string,
   ) {
     const ticket = await this.prisma.ticket.findUnique({
       where: { id: ticketId },
     });
+    if (!ticket) return null;
 
-    if (!ticket) {
-      throw new NotFoundException('Ticket no encontrado');
-    }
+    const updated = await this.prisma.ticket.update({
+      where: { id: ticketId },
+      data: { assignedToId },
+    });
 
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const updatedTicket = await tx.ticket.update({
-        where: { id: ticketId },
-        data: { assignedToId },
-      });
-
-      await tx.ticketHistory.create({
-        data: {
-          ticketId,
-          changedById: currentUserId,
-          fromStatus: ticket.status,
-          toStatus: ticket.status,
-          fromAssignedToId: ticket.assignedToId,
-          toAssignedToId: assignedToId,
-          note,
-        },
-      });
-
-      return updatedTicket;
+    await this.prisma.ticketHistory.create({
+      data: {
+        ticketId,
+        changedById,
+        fromStatus: ticket.status,
+        toStatus: ticket.status,
+        fromAssignedToId: ticket.assignedToId,
+        toAssignedToId: assignedToId,
+        note: note ?? null,
+      },
     });
 
     return updated;
@@ -126,7 +128,52 @@ export class TicketsService {
       where: { ticketId },
       orderBy: { createdAt: 'asc' },
       include: {
-        changedBy: true,
+        changedBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+  }
+
+  // ================== CHAT INTERNO ==================
+
+  // Crear mensaje en el chat del ticket
+  async addMessage(ticketId: number, senderId: number, content: string) {
+    return this.prisma.ticketMessage.create({
+      data: {
+        ticketId,
+        senderId,
+        content,
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+  }
+
+  // Listar mensajes del chat del ticket
+  async getMessages(ticketId: number) {
+    return this.prisma.ticketMessage.findMany({
+      where: { ticketId },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
       },
     });
   }

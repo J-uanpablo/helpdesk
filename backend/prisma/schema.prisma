@@ -8,22 +8,24 @@ datasource db {
 }
 
 model User {
-  id           Int      @id @default(autoincrement())
-  email        String   @unique
+  id           Int        @id @default(autoincrement())
+  email        String     @unique
   passwordHash String
   name         String
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
   // Roles y permisos
   roles           UserRole[]
   // Tickets que el usuario creó
   ticketsCreated  Ticket[]        @relation("TicketCreatedBy")
-  // Tickets que le han sido asignados como agente de soporte
+  // Tickets asignados al usuario
   ticketsAssigned Ticket[]        @relation("TicketAssignedTo")
-  // Cambios realizados por este usuario en tickets
+  // Cambios realizados en tickets
   historyChanges  TicketHistory[] @relation("TicketHistoryChangedBy")
+  // Mensajes enviados en tickets (chat)
+  ticketMessagesSent TicketMessage[] @relation("TicketMessageSender")
 }
 
 model Role {
@@ -78,6 +80,7 @@ model Ticket {
 
   // Historial de cambios del ticket
   history TicketHistory[]
+  messages TicketMessage[]    
 }
 
 model TicketHistory {
@@ -110,3 +113,15 @@ enum TicketPriority {
   HIGH
   URGENT
 }
+model TicketMessage {
+  id        Int      @id @default(autoincrement())
+  ticketId  Int
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  senderId  Int
+  sender    User     @relation("TicketMessageSender", fields: [senderId], references: [id])
+
+  content   String
+  createdAt DateTime @default(now())
+}
+

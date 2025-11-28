@@ -1,0 +1,42 @@
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+    // Pega aquí el token que te devuelve /auth/login
+    const token = 'TU_ACCESS_TOKEN_AQUÍ';
+
+    const socket = io('http://localhost:3000', {
+        transports: ['websocket'],
+        auth: {
+            token,   // se envía en el handshake
+        },
+    });
+
+
+    socket.emit("joinTicket", { ticketId: 2 });
+
+    socket.on("newMessage", (msg) => console.log("📩 Nuevo mensaje:", msg));
+
+    function enviar() {
+        socket.emit("sendMessage", {
+            ticketId: 2,
+            userId: 1,
+            content: document.getElementById("txt").value
+        });
+    }
+    btn.addEventListener('click', () => {
+        const content = input.value.trim();
+        if (!content) return;
+
+        socket.emit('sendMessage', {
+            ticketId: 2,
+            content,
+        });
+
+        log('📤 Tú: ' + content);
+        input.value = '';
+        input.focus();
+    });
+
+</script>
+
+<input id="txt" placeholder="Mensaje..." />
+<button onclick="enviar()">Enviar</button>
