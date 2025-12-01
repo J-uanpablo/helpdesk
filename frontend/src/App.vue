@@ -1,34 +1,22 @@
+<!-- src/App.vue -->
 <script setup lang="ts">
+import { onMounted } from "vue";
+import { useAuth } from "./composables/useAuth";
+
+import LoginView from "./views/LoginView.vue";
 import HelpdeskPanel from "./views/HelpdeskPanel.vue";
+
+const { token, initAuth } = useAuth();
+
+onMounted(() => {
+  initAuth();
+});
 </script>
 
 <template>
-  <HelpdeskPanel />
+  <!-- Si NO hay token, mostramos la pantalla de login -->
+  <LoginView v-if="!token" />
+
+  <!-- Si hay token, mostramos el panel de mesa de ayuda -->
+  <HelpdeskPanel v-else />
 </template>
-
-<style>
-html,
-body,
-#app {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  height: 100%;
-}
-
-#app {
-  max-width: none !important;
-  text-align: left !important;
-}
-
-body {
-  background-color: #020617;
-  color: #e5e7eb;
-}
-
-ul {
-  list-style: none;
-  padding-left: 0;
-  margin: 0;
-}
-</style>
