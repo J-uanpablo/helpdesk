@@ -1,15 +1,23 @@
+// src/tickets/tickets.gateway.ts
 import {
   WebSocketGateway,
   WebSocketServer,
   SubscribeMessage,
-  MessageBody,
   ConnectedSocket,
+  MessageBody,
   OnGatewayConnection,
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { TicketsService } from './tickets.service';
 import { JwtService } from '@nestjs/jwt';
+import { TicketsService } from './tickets.service';
+
+// 👇 extendemos el tipo de Socket para que tenga data.userId
+interface WsClient extends Socket {
+  data: {
+    userId: number;
+  };
+}
 
 @WebSocketGateway({
   cors: { origin: '*' },
@@ -21,71 +29,60 @@ export class TicketsGateway
 
   constructor(
     private readonly ticketsService: TicketsService,
-    private readonly jwtService: JwtService, // 👈 inyectamos JWT
+    private readonly jwtService: JwtService,
   ) {}
 
-  // Se ejecuta cuando un cliente conecta
-  async handleConnection(client: Socket) {
+  // 🔥 AL CONECTAR
+  async handleConnection(client: WsClient) {
     try {
-      const token = client.handshake.auth?.token;
-      if (!token) {
-        client.disconnect(true);
-        return;
-      }
+      const token = client.handshake.auth.token;
+      const ticketId = Number(client.handshake.auth.ticketId);
 
-      // Verificamos el token
-      const payload = this.jwtService.verify(token);
-      // Guardamos el usuario en client.data
-      client.data.user = {
-        id: payload.sub,
-        email: payload.email,
-        roles: payload.roles || [],
-      };
+      if (!token || !ticketId) throw new Error('Missing token or ticketId');
 
-      console.log('WS conectado:', client.data.user);
-    } catch (err) {
-      console.error('Token inválido en WS:', err.message);
-      client.disconnect(true);
+      const payload = await this.jwtService.verifyAsync(token);
+
+      client.data.userId = payload.sub ?? payload.id;
+
+      const room = `ticket_${ticketId}`;
+      client.join(room);
+
+      // 📤 ENVIAR HISTORIAL AL CONECTAR
+      const history = await this.ticketsService.getMessages(ticketId);
+      client.emit('ticket_history', history);
+
+      console.log(
+        `🟢 Usuario ${client.data.userId} conectado al ticket ${ticketId}`,
+      );
+    } catch (error: any) {
+      console.log('❌ Conexión rechazada:', error.message);
+      client.disconnect();
     }
   }
 
-  handleDisconnect(client: Socket) {
-    console.log('WS desconectado:', client.data.user?.email);
+  handleDisconnect(client: WsClient) {
+    console.log('🔴 Cliente desconectado', client.id);
   }
 
-  /** Un usuario se conecta al chat de un ticket */
-  @SubscribeMessage('joinTicket')
-  handleJoin(
-    @MessageBody() data: { ticketId: number },
-    @ConnectedSocket() client: Socket,
+  // 📩 CUANDO CLIENTE ENVÍA MENSAJE
+  @SubscribeMessage('send_message')
+  async handleSendMessage(
+    @ConnectedSocket() client: WsClient,
+    @MessageBody() data: { ticketId: number; content: string },
   ) {
-    const user = client.data.user;
-    if (!user) return;
+    const ticketId = data.ticketId;
+    const room = `ticket_${ticketId}`;
 
-    client.join(`ticket_${data.ticketId}`);
-    client.emit('system', `Conectado al ticket ${data.ticketId}`);
-  }
+    // Guardar en BD
+    const msg = await this.ticketsService.addMessage({
+      ticketId,
+      content: data.content,
+      senderId: client.data.userId,
+    });
 
-  /** Nuevo mensaje */
-  @SubscribeMessage('sendMessage')
-  async handleMessage(
-    @MessageBody()
-    data: { ticketId: number; content: string },
-    @ConnectedSocket() client: Socket,
-  ) {
-    const user = client.data.user;
-    if (!user) {
-      client.emit('system', 'No autenticado');
-      return;
-    }
+    // 📤 Emitir a TODOS los conectados al ticket
+    this.server.to(room).emit('ticket_message', msg);
 
-    const msg = await this.ticketsService.addMessage(
-      data.ticketId,
-      user.id, // 👈 senderId ahora viene del token, no del front
-      data.content,
-    );
-
-    this.server.to(`ticket_${data.ticketId}`).emit('newMessage', msg);
     return msg;
   }
 }

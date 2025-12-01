@@ -1,42 +1,14 @@
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<script>
-    // Pega aquí el token que te devuelve /auth/login
-    const token = 'TU_ACCESS_TOKEN_AQUÍ';
+<!DOCTYPE html>
+<html>
 
-    const socket = io('http://localhost:3000', {
-        transports: ['websocket'],
-        auth: {
-            token,   // se envía en el handshake
-        },
-    });
+<body>
+    <script>
+        let ws = new WebSocket("ws://localhost:3000/tickets/2/chat?token=PEGATUJWT");
+        ws.onopen = () => console.log("Conectado");
+        ws.onerror = e => console.log("Error", e);
+        ws.onclose = () => console.log("Cerrado");
+        ws.onmessage = e => console.log("Mensaje:", e.data);
+    </script>
+</body>
 
-
-    socket.emit("joinTicket", { ticketId: 2 });
-
-    socket.on("newMessage", (msg) => console.log("📩 Nuevo mensaje:", msg));
-
-    function enviar() {
-        socket.emit("sendMessage", {
-            ticketId: 2,
-            userId: 1,
-            content: document.getElementById("txt").value
-        });
-    }
-    btn.addEventListener('click', () => {
-        const content = input.value.trim();
-        if (!content) return;
-
-        socket.emit('sendMessage', {
-            ticketId: 2,
-            content,
-        });
-
-        log('📤 Tú: ' + content);
-        input.value = '';
-        input.focus();
-    });
-
-</script>
-
-<input id="txt" placeholder="Mensaje..." />
-<button onclick="enviar()">Enviar</button>
+</html>

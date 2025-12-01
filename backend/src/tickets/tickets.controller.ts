@@ -18,7 +18,7 @@ import { AssignTicketDto } from './dto/assign-ticket.dto';
 import { CreateMessageDto } from './dto/create-message.dto';
 
 @Controller('tickets')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard) // todos requieren JWT
 export class TicketsController {
   constructor(private readonly ticketsService: TicketsService) {}
 
@@ -27,34 +27,46 @@ export class TicketsController {
   // Crear ticket
   @Post()
   create(@Body() body: any, @Req() req: any) {
+    // tu servicio se llama "create"
     return this.ticketsService.create(body, req.user.id);
   }
 
   // Ver mis tickets
   @Get('my')
   findMy(@Req() req: any) {
+    // tu servicio se llama "findMy"
     return this.ticketsService.findMy(req.user.id);
   }
 
   // Ver todos los tickets (admin o soporte)
-  @Get()
+  @Get('list')
   @UseGuards(RolesGuard)
   @Roles('support', 'admin')
   findAll() {
+    // tu servicio se llama "findAll"
     return this.ticketsService.findAll();
+  }
+
+  // Lista simplificada para el panel (ya existe en tu servicio)
+  @Get('panel-list')
+  @UseGuards(RolesGuard)
+  @Roles('support', 'admin')
+  async panelList() {
+    return this.ticketsService.getTicketsForPanel();
   }
 
   // Ver un ticket concreto
   @Get(':id')
   async findOne(@Req() req: any, @Param('id') id: string) {
-    const ticket = await this.ticketsService.findOne(Number(id));
+    const ticketId = Number(id);
+    const ticket = await this.ticketsService.findOne(ticketId);
 
     if (!ticket) {
       return { message: 'Ticket no existe' };
     }
 
     const isAdminOrSupport =
-      req.user.roles.includes('admin') || req.user.roles.includes('support');
+      req.user.roles?.includes('admin') || req.user.roles?.includes('support');
     const isOwner = ticket.createdById === req.user.id;
     const isAssigned = ticket.assignedToId === req.user.id;
 
@@ -65,46 +77,55 @@ export class TicketsController {
     return ticket;
   }
 
-  // Cambiar estado
+  // ================== CAMBIAR ESTADO ==================
+
   @Patch(':id/status')
   @UseGuards(RolesGuard)
   @Roles('support', 'admin')
-  updateStatus(
+  async updateStatus(
     @Param('id') id: string,
     @Body() dto: UpdateStatusDto,
     @Req() req: any,
   ) {
+    const ticketId = Number(id);
+    // tu servicio se llama "updateStatus"
     return this.ticketsService.updateStatus(
-      Number(id),
+      ticketId,
       dto.status,
       req.user.id,
       dto.note,
     );
   }
 
-  // Asignar ticket
+  // ================== ASIGNAR TICKET ==================
+
   @Patch(':id/assign')
   @UseGuards(RolesGuard)
   @Roles('support', 'admin')
-  assign(
+  async assign(
     @Param('id') id: string,
     @Body() dto: AssignTicketDto,
     @Req() req: any,
   ) {
+    const ticketId = Number(id);
+    // tu servicio se llama "assignTicket"
     return this.ticketsService.assignTicket(
-      Number(id),
+      ticketId,
       dto.assignedToId,
       req.user.id,
       dto.note,
     );
   }
 
-  // Historial
+  // ================== HISTORIAL ==================
+
   @Get(':id/history')
   @UseGuards(RolesGuard)
   @Roles('support', 'admin', 'auditor')
   getHistory(@Param('id') id: string) {
-    return this.ticketsService.getHistory(Number(id));
+    const ticketId = Number(id);
+    // tu servicio se llama "getHistory"
+    return this.ticketsService.getHistory(ticketId);
   }
 
   // ================== CHAT INTERNO ==================
@@ -124,15 +145,22 @@ export class TicketsController {
     }
 
     const isAdminOrSupport =
-      req.user.roles.includes('admin') || req.user.roles.includes('support');
+      req.user.roles?.includes('admin') || req.user.roles?.includes('support');
     const isOwner = ticket.createdById === req.user.id;
     const isAssigned = ticket.assignedToId === req.user.id;
 
     if (!isAdminOrSupport && !isOwner && !isAssigned) {
-      return { message: 'No autorizado para escribir en este ticket' };
+      return {
+        message: 'No autorizado para escribir en este ticket',
+      };
     }
 
-    return this.ticketsService.addMessage(ticketId, req.user.id, dto.content);
+    // tu servicio tiene firma: addMessage({ ticketId, content, senderId })
+    return this.ticketsService.addMessage({
+      ticketId,
+      senderId: req.user.id,
+      content: dto.content,
+    });
   }
 
   // Listar mensajes del chat del ticket
@@ -146,7 +174,7 @@ export class TicketsController {
     }
 
     const isAdminOrSupport =
-      req.user.roles.includes('admin') || req.user.roles.includes('support');
+      req.user.roles?.includes('admin') || req.user.roles?.includes('support');
     const isOwner = ticket.createdById === req.user.id;
     const isAssigned = ticket.assignedToId === req.user.id;
 
@@ -154,6 +182,7 @@ export class TicketsController {
       return { message: 'No autorizado para ver este chat' };
     }
 
+    // tu servicio se llama "getMessages"
     return this.ticketsService.getMessages(ticketId);
   }
 }

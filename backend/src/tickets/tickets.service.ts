@@ -1,39 +1,27 @@
 // src/tickets/tickets.service.ts
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { TicketPriority, TicketStatus } from '@prisma/client';
+import { TicketStatus } from '@prisma/client';
 
 @Injectable()
 export class TicketsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // ================== TICKETS BÁSICOS ==================
-
-  // Crear ticket
-  async create(
-    data: {
-      title: string;
-      description: string;
-      priority?: TicketPriority | string;
-    },
-    userId: number,
-  ) {
-    const priority =
-      typeof data.priority === 'string'
-        ? (data.priority as TicketPriority)
-        : (data.priority ?? TicketPriority.MEDIUM);
-
+  // ============================================================
+  // 🔥 1) CREAR TICKET
+  // ============================================================
+  async create(data: any, userId: number) {
     return this.prisma.ticket.create({
       data: {
-        title: data.title,
-        description: data.description,
-        priority,
-        createdById: userId,
+        ...data,
+        createdById: userId, // Cambia el nombre si tu campo difiere
       },
     });
   }
 
-  // Ver mis tickets
+  // ============================================================
+  // 🔥 2) VER MIS TICKETS (solicitante)
+  // ============================================================
   async findMy(userId: number) {
     return this.prisma.ticket.findMany({
       where: { createdById: userId },
@@ -41,140 +29,108 @@ export class TicketsService {
     });
   }
 
-  // Ver todos los tickets (admin/soporte)
+  // ============================================================
+  // 🔥 3) VER TODOS LOS TICKETS (admin/soporte)
+  // ============================================================
   async findAll() {
     return this.prisma.ticket.findMany({
       orderBy: { createdAt: 'desc' },
     });
   }
 
-  // Buscar un ticket por id
-  async findOne(id: number) {
+  // ============================================================
+  // 🔥 4) VER TICKET INDIVIDUAL
+  // ============================================================
+  async findOne(ticketId: number) {
     return this.prisma.ticket.findUnique({
-      where: { id },
+      where: { id: ticketId },
     });
   }
 
-  // Cambiar estado de un ticket
+  // ============================================================
+  // 🔥 5) ACTUALIZAR ESTADO
+  // ============================================================
   async updateStatus(
     ticketId: number,
-    status: TicketStatus | string,
-    changedById: number,
+    status: TicketStatus, // ← ya no string
+    userId: number,
     note?: string,
   ) {
-    const ticket = await this.prisma.ticket.findUnique({
+    return this.prisma.ticket.update({
       where: { id: ticketId },
+      data: { status },
     });
-    if (!ticket) return null;
-
-    const newStatus =
-      typeof status === 'string' ? (status as TicketStatus) : status;
-
-    const updated = await this.prisma.ticket.update({
-      where: { id: ticketId },
-      data: { status: newStatus },
-    });
-
-    await this.prisma.ticketHistory.create({
-      data: {
-        ticketId,
-        changedById,
-        fromStatus: ticket.status,
-        toStatus: newStatus,
-        fromAssignedToId: ticket.assignedToId,
-        toAssignedToId: ticket.assignedToId,
-        note: note ?? null,
-      },
-    });
-
-    return updated;
   }
 
-  // Asignar ticket a un usuario
+  // ============================================================
+  // 🔥 6) ASIGNAR TICKET
+  // ============================================================
   async assignTicket(
     ticketId: number,
     assignedToId: number,
-    changedById: number,
+    userId: number,
     note?: string,
   ) {
-    const ticket = await this.prisma.ticket.findUnique({
-      where: { id: ticketId },
-    });
-    if (!ticket) return null;
-
-    const updated = await this.prisma.ticket.update({
+    return this.prisma.ticket.update({
       where: { id: ticketId },
       data: { assignedToId },
     });
-
-    await this.prisma.ticketHistory.create({
-      data: {
-        ticketId,
-        changedById,
-        fromStatus: ticket.status,
-        toStatus: ticket.status,
-        fromAssignedToId: ticket.assignedToId,
-        toAssignedToId: assignedToId,
-        note: note ?? null,
-      },
-    });
-
-    return updated;
   }
 
-  // Historial del ticket
+  // ============================================================
+  // 🔥 7) HISTORIAL (placeholder por si luego se implementa)
+  // ============================================================
   async getHistory(ticketId: number) {
-    return this.prisma.ticketHistory.findMany({
-      where: { ticketId },
-      orderBy: { createdAt: 'asc' },
-      include: {
-        changedBy: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
-    });
+    return []; // Cuando quieras registro real, lo programamos.
   }
 
-  // ================== CHAT INTERNO ==================
-
-  // Crear mensaje en el chat del ticket
-  async addMessage(ticketId: number, senderId: number, content: string) {
+  // ============================================================
+  // 🔥 8) CHAT - ENVIAR MENSAJE
+  // ============================================================
+  async addMessage(data: {
+    ticketId: number;
+    content: string;
+    senderId: number;
+  }) {
     return this.prisma.ticketMessage.create({
       data: {
-        ticketId,
-        senderId,
-        content,
-      },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
+        content: data.content,
+        ticketId: data.ticketId,
+        senderId: data.senderId,
       },
     });
   }
 
-  // Listar mensajes del chat del ticket
+  // ============================================================
+  // 🔥 9) CHAT - LISTAR MENSAJES
+  // ============================================================
   async getMessages(ticketId: number) {
     return this.prisma.ticketMessage.findMany({
       where: { ticketId },
       orderBy: { createdAt: 'asc' },
       include: {
-        sender: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
+        sender: { select: { name: true } }, // Cambia si tu modelo usa otro campo
       },
     });
+  }
+
+  // ============================================================
+  // 🔥 10) LISTA RESUMIDA PARA EL PANEL (frontend tipo WhatsApp)
+  // ============================================================
+  async getTicketsForPanel() {
+    const tickets = await this.prisma.ticket.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        createdBy: { select: { name: true } },
+      },
+    });
+
+    return tickets.map((t: any) => ({
+      id: t.id,
+      subject: t.subject ?? t.title ?? t.asunto ?? null,
+      status: t.status ?? null,
+      createdAt: t.createdAt,
+      requesterName: t.createdBy?.name ?? null,
+    }));
   }
 }
