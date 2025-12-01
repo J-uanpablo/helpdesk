@@ -2,8 +2,30 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useTicketChat } from "../composables/useTicketChat";
+import { useAuth } from "../composables/useAuth";
 
-/* Tipos */
+/* ===========================
+   1) ESTADO PARA CAMBIAR ESTADO DEL TICKET
+=========================== */
+const isUpdatingStatus = ref(false);
+const statusError = ref<string | null>(null);
+
+// Estados que existen en tu enum TicketStatus (schema.prisma)
+const STATUS_OPTIONS = [
+  { value: "PENDING", label: "Abierto" },
+  { value: "IN_PROGRESS", label: "En progreso" },
+  { value: "RESOLVED", label: "Resuelto" },
+  { value: "CLOSED", label: "Cerrado" },
+];
+
+/* ===========================
+   2) AUTENTICACIÓN (useAuth)
+=========================== */
+const { token, user } = useAuth();
+
+/* ===========================
+   3) TIPOS
+=========================== */
 interface TicketMessage {
   id: number;
   content: string;
@@ -22,8 +44,9 @@ interface TicketSummary {
   requesterName?: string;
 }
 
-/* Estado general */
-const token = ref<string>("");
+/* ===========================
+   4) ESTADO GENERAL DEL PANEL
+=========================== */
 const tickets = ref<TicketSummary[]>([]);
 const isLoadingTickets = ref(false);
 const ticketsError = ref<string | null>(null);
@@ -33,7 +56,9 @@ const selectedTicket = computed(
   () => tickets.value.find((t) => t.id === selectedTicketId.value) || null
 );
 
-/* Chat */
+/* ===========================
+   5) CHAT (useTicketChat)
+=========================== */
 const { messages, isConnected, isConnecting, lastError, connect, sendMessage } =
   useTicketChat();
 
@@ -47,24 +72,68 @@ const canSend = computed(
     newMessage.value.trim().length > 0
 );
 
-/* ----- Estado del selector de estado del ticket ----- */
-const isUpdatingStatus = ref(false);
-const statusError = ref<string | null>(null);
+/* ===========================
+   6) CAMBIAR ESTADO DEL TICKET
+=========================== */
+async function changeStatus(newStatus: string) {
+  statusError.value = null;
 
-// Posibles estados de tu sistema (ajusta los textos si usas otros)
-const STATUS_OPTIONS = [
-  { value: "PENDING", label: "Abierto" },
-  { value: "IN_PROGRESS", label: "En progreso" },
-  { value: "RESOLVED", label: "Resuelto" },
-  { value: "CLOSED", label: "Cerrado" },
-];
+  if (!selectedTicketId.value) return;
 
-/* Cargar tickets */
+  const jwt = (token.value ?? "").trim();
+  if (!jwt) {
+    statusError.value = "No hay token JWT para autenticar la petición.";
+    return;
+  }
+
+  isUpdatingStatus.value = true;
+  try {
+    const res = await fetch(
+      `http://localhost:3000/tickets/${selectedTicketId.value}/status`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${jwt}`,
+        },
+        body: JSON.stringify({
+          status: newStatus,
+          note: "Estado actualizado desde el panel de ayuda",
+        }),
+      }
+    );
+
+    if (!res.ok) {
+      throw new Error(`Error ${res.status} al actualizar el estado`);
+    }
+
+    const updated = await res.json();
+
+    // Actualizar estado del ticket en la lista local
+    const idx = tickets.value.findIndex((t) => t.id === selectedTicketId.value);
+    if (idx !== -1) {
+      tickets.value[idx] = {
+        ...tickets.value[idx],
+        status: updated.status ?? newStatus,
+      };
+    }
+  } catch (err: any) {
+    console.error(err);
+    statusError.value = err.message || "No se pudo actualizar el estado.";
+  } finally {
+    isUpdatingStatus.value = false;
+  }
+}
+
+/* ===========================
+   7) CARGAR TICKETS DESDE EL BACKEND
+=========================== */
 async function loadTickets() {
   ticketsError.value = null;
 
-  if (!token.value.trim()) {
-    ticketsError.value = "Primero pega un token JWT válido.";
+  const jwt = (token.value ?? "").trim();
+  if (!jwt) {
+    ticketsError.value = "No hay token JWT. Inicia sesión primero.";
     return;
   }
 
@@ -72,7 +141,7 @@ async function loadTickets() {
   try {
     const res = await fetch("http://localhost:3000/tickets/panel-list", {
       headers: {
-        Authorization: `Bearer ${token.value.trim()}`,
+        Authorization: `Bearer ${jwt}`,
       },
     });
 
@@ -95,72 +164,30 @@ async function loadTickets() {
   }
 }
 
-/* Conectar chat al ticket seleccionado */
+/* ===========================
+   8) CONECTAR CHAT AL TICKET SELECCIONADO
+=========================== */
 function connectToSelected() {
-  if (!selectedTicketId.value || !token.value.trim()) return;
-  connect(selectedTicketId.value, token.value.trim());
+  const jwt = (token.value ?? "").trim();
+  if (!selectedTicketId.value || !jwt) return;
+  connect(selectedTicketId.value, jwt);
 }
 
-/* Seleccionar ticket */
+/* ===========================
+   9) SELECCIONAR TICKET
+=========================== */
 function handleSelectTicket(ticket: TicketSummary) {
   selectedTicketId.value = ticket.id;
   connectToSelected();
 }
 
-/* Enviar mensaje */
+/* ===========================
+   10) ENVIAR MENSAJE
+=========================== */
 function handleSend() {
   if (!canSend.value) return;
   sendMessage(selectedTicketId.value as number, newMessage.value.trim());
   newMessage.value = "";
-}
-
-/* Cambiar estado del ticket */
-async function changeStatus(newStatus: string) {
-  statusError.value = null;
-  if (!selectedTicketId.value) return;
-  if (!token.value.trim()) {
-    statusError.value = "No hay token JWT para autenticar la petición.";
-    return;
-  }
-
-  isUpdatingStatus.value = true;
-  try {
-    const res = await fetch(
-      `http://localhost:3000/tickets/${selectedTicketId.value}/status`,
-      {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token.value.trim()}`,
-        },
-        body: JSON.stringify({
-          status: newStatus,
-          note: "Estado actualizado desde el panel de ayuda",
-        }),
-      }
-    );
-
-    if (!res.ok) {
-      throw new Error(`Error ${res.status} al actualizar el estado`);
-    }
-
-    // Si tu backend devuelve el ticket actualizado:
-    const updated = await res.json();
-
-    // Actualizar el ticket en la lista local
-    const idx = tickets.value.findIndex((t) => t.id === selectedTicketId.value);
-    if (idx !== -1) {
-      tickets.value[idx] = {
-        ...tickets.value[idx],
-        status: updated.status ?? newStatus,
-      };
-    }
-  } catch (err: any) {
-    console.error(err);
-    statusError.value = err.message || "No se pudo actualizar el estado.";
-  } finally {
-    isUpdatingStatus.value = false;
-  }
 }
 </script>
 
@@ -179,27 +206,28 @@ async function changeStatus(newStatus: string) {
           </p>
         </div>
 
-        <div class="flex-1 flex flex-col gap-1 md:max-w-xl">
-          <label class="text-xs text-slate-300">
-            Token JWT (pégalo desde Postman)
-          </label>
-          <div class="flex gap-2">
-            <textarea
-              v-model="token"
-              rows="2"
-              class="flex-1 rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-[11px] font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-            />
-            <button
-              type="button"
-              @click="loadTickets"
-              class="h-9 self-end px-3 rounded-md bg-emerald-500 hover:bg-emerald-600 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-              :disabled="isLoadingTickets || !token.trim()"
-            >
-              {{ isLoadingTickets ? "Cargando..." : "Cargar tickets" }}
-            </button>
-          </div>
-          <p v-if="ticketsError" class="text-[11px] text-rose-400">
+        <!-- Info de sesión + botón cargar tickets -->
+        <div class="flex flex-col items-end gap-1 text-right">
+          <p class="text-[11px] text-slate-300">
+            Sesión:
+            <span class="font-semibold">
+              {{ user?.name || "Usuario autenticado" }}
+            </span>
+          </p>
+          <p v-if="user?.email" class="text-[10px] text-slate-500">
+            {{ user.email }}
+          </p>
+
+          <button
+            type="button"
+            @click="loadTickets"
+            class="h-8 px-3 rounded-md bg-emerald-500 hover:bg-emerald-600 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+            :disabled="isLoadingTickets || !token"
+          >
+            {{ isLoadingTickets ? "Cargando tickets..." : "Cargar tickets" }}
+          </button>
+
+          <p v-if="ticketsError" class="text-[11px] text-rose-400 mt-1">
             {{ ticketsError }}
           </p>
         </div>
@@ -256,7 +284,7 @@ async function changeStatus(newStatus: string) {
             >
               <p class="text-xs text-slate-500">
                 No hay tickets cargados.<br />
-                Pega el token y pulsa
+                Pulsa
                 <span class="font-semibold">“Cargar tickets”</span>.
               </p>
             </div>
@@ -273,7 +301,6 @@ async function changeStatus(newStatus: string) {
                   <span class="text-sm font-semibold truncate">
                     #{{ t.id }} – {{ t.subject || "Sin asunto" }}
                   </span>
-
                   <span
                     class="text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap"
                     :class="{
@@ -299,7 +326,6 @@ async function changeStatus(newStatus: string) {
                     }}
                   </span>
                 </div>
-
                 <p class="text-[11px] text-slate-400 truncate">
                   {{ t.requesterName || "Usuario desconocido" }}
                 </p>
@@ -317,9 +343,9 @@ async function changeStatus(newStatus: string) {
         <section class="flex-1 flex flex-col bg-slate-900">
           <!-- Header del chat -->
           <div
-            class="px-4 py-3 border-b border-slate-800 flex items-center justify-between bg-slate-900/90 gap-4"
+            class="px-4 py-3 border-b border-slate-800 flex items-center justify-between bg-slate-900/90"
           >
-            <div class="flex flex-col">
+            <div>
               <h2 class="text-lg font-semibold">
                 <span v-if="selectedTicketId">
                   Ticket #{{ selectedTicketId }}
@@ -331,44 +357,49 @@ async function changeStatus(newStatus: string) {
               </p>
             </div>
 
-            <!-- Selector de estado -->
-            <div v-if="selectedTicketId" class="flex flex-col items-end gap-1">
-              <label class="text-[11px] text-slate-400">
-                Estado del ticket
-              </label>
-              <select
-                class="text-xs bg-slate-900 border border-slate-600 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                :value="selectedTicket?.status || 'OPEN'"
-                @change="
-                  changeStatus(
-                    ($event.target as HTMLSelectElement).value as string
-                  )
-                "
-                :disabled="isUpdatingStatus"
-              >
-                <option
-                  v-for="opt in STATUS_OPTIONS"
-                  :key="opt.value"
-                  :value="opt.value"
-                >
-                  {{ opt.label }}
-                </option>
-              </select>
-              <p v-if="statusError" class="text-[10px] text-rose-400">
-                {{ statusError }}
-              </p>
-            </div>
+            <div class="text-right space-y-1">
+              <div>
+                <p class="text-[11px] text-slate-400">
+                  {{ selectedTicket?.requesterName || "Sin solicitante" }}
+                </p>
+                <p class="text-[10px] text-slate-500">
+                  {{
+                    selectedTicket?.createdAt
+                      ? new Date(
+                          selectedTicket.createdAt as string
+                        ).toLocaleString()
+                      : ""
+                  }}
+                </p>
+              </div>
 
-            <div class="text-right">
-              <p class="text-[11px] text-slate-400">
-                {{ selectedTicket?.requesterName || "Sin solicitante" }}
-              </p>
-              <p class="text-[10px] text-slate-500">
-                {{
-                  selectedTicket?.createdAt
-                    ? new Date(selectedTicket.createdAt).toLocaleString()
-                    : ""
-                }}
+              <!-- Selector de estado -->
+              <div class="flex items-center justify-end gap-2">
+                <label class="text-[11px] text-slate-400">Estado:</label>
+                <select
+                  class="text-[11px] bg-slate-900 border border-slate-700 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  :disabled="!selectedTicketId || isUpdatingStatus"
+                  :value="selectedTicket?.status || ''"
+                  @change="
+                    changeStatus(($event.target as HTMLSelectElement).value)
+                  "
+                >
+                  <option value="" disabled>Selecciona...</option>
+                  <option
+                    v-for="opt in STATUS_OPTIONS"
+                    :key="opt.value"
+                    :value="opt.value"
+                  >
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </div>
+
+              <p
+                v-if="statusError"
+                class="text-[10px] text-rose-400 mt-1 max-w-xs ml-auto"
+              >
+                {{ statusError }}
               </p>
             </div>
           </div>
