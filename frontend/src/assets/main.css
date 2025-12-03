@@ -2,8 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-/* el resto de tus estilos, si quieres, debajo */
-
 :root {
   color-scheme: dark;
 }
