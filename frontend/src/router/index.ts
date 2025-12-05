@@ -6,6 +6,7 @@ import { useAuth } from "../composables/useAuth";
 import LoginView from "../views/LoginView.vue";
 import HelpdeskPanel from "../views/HelpdeskPanel.vue";
 import ClientTicketsView from "../views/ClientTicketsView.vue";
+import ClientNewTicketView from "../views/ClientNewTicketView.vue";
 
 const routes: RouteRecordRaw[] = [
   {
@@ -24,6 +25,32 @@ const routes: RouteRecordRaw[] = [
     name: "cliente",
     component: ClientTicketsView,
     meta: { requiresAuth: true },
+  },
+  {
+    path: "/cliente/nuevo",
+    name: "cliente-nuevo",
+    component: ClientNewTicketView,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: "/tickets/:id",
+    name: "ClientTicketChat",
+    component: () => import("../views/ClientTicketChatView.vue"),
+  },
+  {
+    path: "/cliente/ticket/:id",
+    name: "ClientTicketChat",
+    component: () => import("../views/ClientTicketChatView.vue"),
+  },
+  {
+    path: "/cliente/nuevo-ticket",
+    name: "ClientNewTicket",
+    component: () => import("../views/ClientNewTicketView.vue"),
+  },
+  {
+    path: "/admin/agentes",
+    name: "AdminAgents",
+    component: () => import("../views/AdminAgentsView.vue"),
   },
   {
     path: "/",

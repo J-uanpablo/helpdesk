@@ -55,10 +55,20 @@ async function login(email: string, password: string) {
       throw new Error(`Error ${res.status} al iniciar sesión`);
     }
 
-    const data = await res.json();
-    // Ajusta los nombres según tu backend (access_token, token, user, etc.)
-    const accessToken = data.access_token || data.token;
-    const userData = data.user || null;
+    const data: any = await res.json();
+    console.log("🔐 LOGIN RESPONSE:", data); // <--- para ver qué devuelve tu backend
+
+    // Intenta varias claves típicas para el token
+    const accessToken =
+      data.access_token ||
+      data.token ||
+      data.jwt ||
+      data.accessToken ||
+      (data.data && (data.data.access_token || data.data.token));
+
+    // Intenta varias claves típicas para el usuario
+    const userData: AuthUser | null =
+      data.user || data.profile || data.data?.user || null;
 
     if (!accessToken) {
       throw new Error("La respuesta no contiene token");

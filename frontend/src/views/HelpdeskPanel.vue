@@ -1,6 +1,6 @@
 <!-- src/views/HelpdeskPanel.vue -->
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { useTicketChat } from "../composables/useTicketChat";
 import { useAuth } from "../composables/useAuth";
 
@@ -21,7 +21,16 @@ const STATUS_OPTIONS = [
 /* ===========================
    2) AUTENTICACIÓN (useAuth)
 =========================== */
-const { token, user } = useAuth();
+const { token, user, initAuth } = useAuth();
+
+/* id del usuario logueado (soporta user como ref o como objeto simple) */
+const myId = computed<number | null>(() => {
+  const u: any = user;
+  if (!u) return null;
+  if (typeof u.id === "number") return u.id;
+  if (u.value && typeof u.value.id === "number") return u.value.id;
+  return null;
+});
 
 /* ===========================
    3) TIPOS
@@ -30,6 +39,7 @@ interface TicketMessage {
   id: number;
   content: string;
   createdAt: string;
+  senderId?: number;
   sender?: {
     id: number;
     name: string;
@@ -42,6 +52,7 @@ interface TicketSummary {
   status?: string;
   createdAt?: string;
   requesterName?: string;
+  area?: string;
 }
 
 /* ===========================
@@ -54,6 +65,11 @@ const ticketsError = ref<string | null>(null);
 const selectedTicketId = ref<number | null>(null);
 const selectedTicket = computed(
   () => tickets.value.find((t) => t.id === selectedTicketId.value) || null
+);
+
+/* ticket cerrado? */
+const isTicketClosed = computed(
+  () => selectedTicket.value?.status === "CLOSED"
 );
 
 /* ===========================
@@ -69,7 +85,106 @@ const canSend = computed(
   () =>
     isConnected.value &&
     !!selectedTicketId.value &&
-    newMessage.value.trim().length > 0
+    newMessage.value.trim().length > 0 &&
+    !isTicketClosed.value
+);
+
+/* función helper: saber si un mensaje es mío (agente/admin actual) */
+function isMine(msg: TicketMessage): boolean {
+  const uid = myId.value;
+  if (!uid) return false;
+  if (msg.senderId === uid) return true;
+  if (msg.sender && msg.sender.id === uid) return true;
+  return false;
+}
+
+/* formatear fecha sin segundos */
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  return date.toLocaleString("es-CO", {
+    dateStyle: "short", // 4/12/25
+    timeStyle: "short", // 2:21 p. m.
+  });
+}
+
+/* ===========================
+   5.1) SONIDO DE NOTIFICACIÓN EN MENSAJE NUEVO
+=========================== */
+const lastMessagesCount = ref(0);
+const hasInitializedMessages = ref(false);
+
+function playNotification() {
+  try {
+    // usa la ruta que ya tienes en public; ajusta si es necesario
+    const audio = new Audio("/sounds/Sonido_Notificacion.mp3");
+    audio.play();
+  } catch (e) {
+    console.error("No se pudo reproducir el sonido de notificación:", e);
+  }
+}
+
+/* ===========================
+   5.2) SCROLL TIPO WHATSAPP
+=========================== */
+const chatContainer = ref<HTMLDivElement | null>(null);
+const isAtBottom = ref(true);
+
+function checkIfAtBottom() {
+  const el = chatContainer.value;
+  if (!el) return;
+  const threshold = 80; // px de tolerancia
+  const diff = el.scrollHeight - (el.scrollTop + el.clientHeight);
+  isAtBottom.value = diff <= threshold;
+}
+
+function scrollToBottom() {
+  const el = chatContainer.value;
+  if (!el) return;
+  el.scrollTop = el.scrollHeight;
+}
+
+/* Watch sobre cantidad de mensajes:
+   - controla sonido
+   - y scroll auto solo si estabas abajo */
+watch(
+  () => typedMessages.value.length,
+  async (newLen) => {
+    // ---- SCROLL ----
+    if (isAtBottom.value) {
+      await nextTick();
+      scrollToBottom();
+    }
+
+    // ---- SONIDO ----
+    // primera vez: inicializar y no sonar
+    if (!hasInitializedMessages.value) {
+      lastMessagesCount.value = newLen;
+      hasInitializedMessages.value = true;
+      return;
+    }
+
+    if (newLen <= lastMessagesCount.value) {
+      lastMessagesCount.value = newLen;
+      return;
+    }
+
+    const last = typedMessages.value[typedMessages.value.length - 1];
+    if (!last) {
+      lastMessagesCount.value = newLen;
+      return;
+    }
+
+    const uid = myId.value;
+    // si el mensaje es mío, no sonar
+    if (uid && (last.senderId === uid || last.sender?.id === uid)) {
+      lastMessagesCount.value = newLen;
+      return;
+    }
+
+    // mensaje nuevo de otra persona → sonar
+    playNotification();
+    lastMessagesCount.value = newLen;
+  }
 );
 
 /* ===========================
@@ -155,6 +270,8 @@ async function loadTickets() {
     if (!selectedTicketId.value && tickets.value.length > 0) {
       selectedTicketId.value = tickets.value[0].id;
       connectToSelected();
+      await nextTick();
+      scrollToBottom();
     }
   } catch (err: any) {
     console.error(err);
@@ -165,12 +282,41 @@ async function loadTickets() {
 }
 
 /* ===========================
+   7.1) AUTO-REFRESH CADA 3 SEGUNDOS
+=========================== */
+let refreshId: number | null = null;
+
+onMounted(async () => {
+  initAuth();
+  await loadTickets();
+
+  refreshId = window.setInterval(() => {
+    loadTickets();
+  }, 5000);
+});
+
+onUnmounted(() => {
+  if (refreshId !== null) {
+    clearInterval(refreshId);
+  }
+});
+
+/* ===========================
    8) CONECTAR CHAT AL TICKET SELECCIONADO
 =========================== */
 function connectToSelected() {
   const jwt = (token.value ?? "").trim();
   if (!selectedTicketId.value || !jwt) return;
+
+  // reset contadores de sonido al cambiar de ticket
+  hasInitializedMessages.value = false;
+  lastMessagesCount.value = 0;
+
   connect(selectedTicketId.value, jwt);
+
+  nextTick(() => {
+    scrollToBottom();
+  });
 }
 
 /* ===========================
@@ -193,8 +339,10 @@ function handleSend() {
 
 <template>
   <!-- Fondo completo (oscuro) -->
-  <div class="h-screen bg-slate-900 text-slate-100 flex flex-col">
-    <!-- HEADER SUPERIOR (fuera del “card”, como WhatsApp Web) -->
+  <div
+    class="h-screen bg-slate-900 text-slate-100 flex flex-col overflow-hidden"
+  >
+    <!-- HEADER SUPERIOR -->
     <header class="px-6 pt-4 pb-3">
       <div
         class="max-w-6xl mx-auto flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
@@ -234,14 +382,14 @@ function handleSend() {
       </div>
     </header>
 
-    <!-- CUERPO PRINCIPAL: panel centrado tipo WhatsApp -->
-    <main class="flex-1 flex justify-center items-stretch px-4 pb-4">
+    <!-- CUERPO PRINCIPAL -->
+    <main class="flex-1 flex justify-center items-stretch px-4 pb-4 min-h-0">
       <div
-        class="flex flex-1 max-w-6xl mx-auto border border-slate-800 bg-slate-950/60 rounded-xl overflow-hidden shadow-lg"
+        class="flex flex-1 max-w-6xl mx-auto border border-slate-800 bg-slate-950/60 rounded-xl overflow-hidden shadow-lg min-h-0"
       >
         <!-- COLUMNA IZQUIERDA: TICKETS -->
         <aside
-          class="w-80 border-r border-slate-800 bg-slate-950 flex flex-col"
+          class="w-80 border-r border-slate-800 bg-slate-950 flex flex-col min-h-0"
         >
           <!-- Barra superior de la lista -->
           <div
@@ -329,10 +477,10 @@ function handleSend() {
                 <p class="text-[11px] text-slate-400 truncate">
                   {{ t.requesterName || "Usuario desconocido" }}
                 </p>
+
+                <!-- Fecha sin segundos -->
                 <p class="text-[10px] text-slate-500">
-                  {{
-                    t.createdAt ? new Date(t.createdAt).toLocaleString() : ""
-                  }}
+                  {{ t.createdAt ? formatDateTime(t.createdAt as string) : "" }}
                 </p>
               </li>
             </ul>
@@ -340,7 +488,7 @@ function handleSend() {
         </aside>
 
         <!-- COLUMNA DERECHA: CHAT -->
-        <section class="flex-1 flex flex-col bg-slate-900">
+        <section class="flex-1 flex flex-col bg-slate-900 min-h-0">
           <!-- Header del chat -->
           <div
             class="px-4 py-3 border-b border-slate-800 flex items-center justify-between bg-slate-900/90"
@@ -365,9 +513,7 @@ function handleSend() {
                 <p class="text-[10px] text-slate-500">
                   {{
                     selectedTicket?.createdAt
-                      ? new Date(
-                          selectedTicket.createdAt as string
-                        ).toLocaleString()
+                      ? formatDateTime(selectedTicket.createdAt as string)
                       : ""
                   }}
                 </p>
@@ -406,7 +552,9 @@ function handleSend() {
 
           <!-- Mensajes -->
           <div
+            ref="chatContainer"
             class="flex-1 bg-slate-900 overflow-y-auto px-4 py-3 space-y-3 flex flex-col"
+            @scroll="checkIfAtBottom"
           >
             <div
               v-if="!selectedTicketId"
@@ -419,6 +567,25 @@ function handleSend() {
             </div>
 
             <template v-else>
+              <!-- Aviso de ticket cerrado -->
+              <div
+                v-if="selectedTicket?.status === 'CLOSED'"
+                class="flex justify-center mb-3"
+              >
+                <div
+                  class="max-w-md w-full bg-slate-800/80 border border-slate-700 rounded-lg px-4 py-3 text-xs text-slate-100 flex items-start gap-2"
+                >
+                  <span class="text-lg leading-none">🔒</span>
+                  <div>
+                    <p class="font-semibold mb-1">Ticket cerrado</p>
+                    <p>
+                      Este ticket está cerrado. Si necesitas más ayuda, por
+                      favor abre uno nuevo.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               <div
                 v-if="typedMessages.length === 0"
                 class="flex-1 flex items-center justify-center"
@@ -428,31 +595,41 @@ function handleSend() {
                 </p>
               </div>
 
+              <!-- Burbujas estilo WhatsApp -->
               <div
-                v-else
                 v-for="msg in typedMessages"
                 :key="msg.id"
-                class="flex flex-col text-sm bg-slate-800/90 border border-slate-700 rounded-lg px-3 py-2 max-w-xl"
+                class="flex w-full"
+                :class="isMine(msg) ? 'justify-end' : 'justify-start'"
               >
-                <div class="flex justify-between items-center mb-0.5">
-                  <span class="font-semibold text-emerald-300">
-                    {{ msg.sender?.name || "Usuario" }}
-                  </span>
-                  <span class="text-[11px] text-slate-400">
-                    {{ new Date(msg.createdAt).toLocaleString() }}
-                  </span>
+                <div
+                  class="max-w-xs md:max-w-md px-3 py-2 rounded-2xl shadow border text-sm"
+                  :class="
+                    isMine(msg)
+                      ? 'bg-emerald-600 text-white border-white rounded-br-sm'
+                      : 'bg-gray-600 text-white border-gray-500 rounded-bl-sm'
+                  "
+                >
+                  <!-- Nombre del remitente -->
+                  <p class="text-[11px] font-semibold text-left mb-1">
+                    {{ isMine(msg) ? "Tú" : msg.sender?.name || "Usuario" }}
+                  </p>
+
+                  <!-- Contenido del mensaje -->
+                  <p class="whitespace-pre-line text-left leading-snug mb-1">
+                    {{ msg.content }}
+                  </p>
+
+                  <!-- Fecha debajo -->
+                  <p class="text-[10px] text-left text-white opacity-90">
+                    {{ formatDateTime(msg.createdAt) }}
+                  </p>
                 </div>
-                <p class="text-slate-100 whitespace-pre-line">
-                  {{ msg.content }}
-                </p>
-                <p class="text-[10px] text-slate-500 mt-0.5">
-                  (ID mensaje: {{ msg.id }})
-                </p>
               </div>
             </template>
           </div>
 
-          <!-- Input -->
+          <!-- Input (fijo abajo del panel de chat) -->
           <form
             class="border-t border-slate-800 px-4 py-3 flex gap-2 bg-slate-900/90"
             @submit.prevent="handleSend"
@@ -462,12 +639,16 @@ function handleSend() {
               type="text"
               class="flex-1 rounded-md bg-slate-900 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
               placeholder="Escribe un mensaje para este ticket..."
-              :disabled="!selectedTicketId || !isConnected"
+              :disabled="
+                !selectedTicketId ||
+                !isConnected ||
+                selectedTicket?.status === 'CLOSED'
+              "
             />
             <button
               type="submit"
               class="px-4 py-2 rounded-md bg-emerald-500 hover:bg-emerald-600 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-              :disabled="!canSend"
+              :disabled="!canSend || selectedTicket?.status === 'CLOSED'"
             >
               Enviar
             </button>
@@ -484,3 +665,19 @@ function handleSend() {
     </main>
   </div>
 </template>
+
+<style scoped>
+/* Scrollbar sutil para la lista de mensajes y tickets */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.6);
+}
+</style>
