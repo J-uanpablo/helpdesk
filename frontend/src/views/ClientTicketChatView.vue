@@ -23,12 +23,33 @@
         </p>
       </div>
 
-      <router-link
-        to="/cliente"
-        class="text-sm px-3 py-1 border border-slate-600 rounded hover:bg-slate-800"
-      >
-        ← Volver a mis tickets
-      </router-link>
+      <div class="flex flex-col items-end gap-1 text-right">
+        <p class="text-[11px] text-slate-300">
+          Sesión:
+          <span class="font-semibold">
+            {{ user?.name || "Usuario autenticado" }}
+          </span>
+        </p>
+        <p v-if="user?.email" class="text-[10px] text-slate-500">
+          {{ user.email }}
+        </p>
+
+        <div class="flex gap-2 mt-1">
+          <router-link
+            to="/cliente"
+            class="text-xs px-3 py-1 border border-slate-600 rounded hover:bg-slate-800"
+          >
+            ← Volver a mis tickets
+          </router-link>
+
+          <button
+            @click="confirmLogout"
+            class="px-3 py-1 rounded-md bg-red-500 hover:bg-red-600 text-xs font-semibold text-white"
+          >
+            Cerrar sesión
+          </button>
+        </div>
+      </div>
     </header>
 
     <!-- Contenido principal: mensajes -->
@@ -39,22 +60,6 @@
         class="bg-red-100 text-red-700 px-4 py-2 rounded mb-3 text-sm"
       >
         {{ error }}
-      </div>
-
-      <!-- Aviso de ticket cerrado (muy visible) -->
-      <div
-        v-if="isTicketClosed"
-        class="mb-4 px-5 py-3 rounded-lg border border-yellow-400 bg-yellow-200/20 text-center"
-      >
-        <p class="text-lg mb-1">
-          🔒
-          <strong>Ticket cerrado</strong>
-        </p>
-        <p class="text-sm text-yellow-200">
-          No puedes enviar más mensajes.<br />
-          Si necesitas nueva ayuda, crea un nuevo ticket desde tu panel de
-          cliente.
-        </p>
       </div>
 
       <!-- Mensajes -->
@@ -98,7 +103,21 @@
           </div>
         </div>
       </div>
-
+      <!-- Aviso de ticket cerrado (muy visible) -->
+      <div
+        v-if="isTicketClosed"
+        class="mb-4 px-5 py-3 rounded-lg border border-yellow-400 bg-yellow-200/20 text-center"
+      >
+        <p class="text-lg mb-1">
+          🔒
+          <strong>Ticket cerrado</strong>
+        </p>
+        <p class="text-sm text-yellow-200">
+          No puedes enviar más mensajes.<br />
+          Si necesitas nueva ayuda, crea un nuevo ticket desde tu panel de
+          cliente.
+        </p>
+      </div>
       <!-- Caja de envío -->
       <form
         class="mt-4 border-t border-slate-800 pt-4 flex items-center gap-3"
@@ -130,6 +149,36 @@
         </button>
       </form>
     </section>
+    <!-- 🔴 Modal de confirmación para cerrar sesión -->
+    <div
+      v-if="showLogoutModal"
+      class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+    >
+      <div
+        class="bg-slate-900 border border-slate-700 rounded-lg p-6 w-full max-w-sm shadow-xl"
+      >
+        <h2 class="text-lg font-semibold text-white mb-2">¿Cerrar sesión?</h2>
+        <p class="text-sm text-slate-300 mb-4">
+          ¿Estás seguro de que deseas cerrar sesión?
+        </p>
+
+        <div class="flex justify-end gap-3">
+          <button
+            @click="cancelLogout"
+            class="px-3 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-sm"
+          >
+            Cancelar
+          </button>
+
+          <button
+            @click="doLogout"
+            class="px-3 py-1 rounded-md bg-red-500 hover:bg-red-600 text-sm font-semibold"
+          >
+            Sí, cerrar sesión
+          </button>
+        </div>
+      </div>
+    </div>
   </main>
 </template>
 
@@ -164,7 +213,7 @@ interface TicketMessage {
 
 const route = useRoute();
 const router = useRouter();
-const { token, user } = useAuth();
+const { token, user, logout } = useAuth();
 
 const ticketId = Number(route.params.id);
 
@@ -188,7 +237,18 @@ const isTicketClosed = computed(() => ticket.value?.status === "CLOSED");
 // Estado visible para el usuario (CERRADO en vez de CLOSED)
 const ticketStatusLabel = computed(() => {
   if (!ticket.value?.status) return "PENDIENTE";
-  return ticket.value.status === "CLOSED" ? "CERRADO" : ticket.value.status;
+  switch (ticket.value.status) {
+    case "PENDING":
+      return "ABIERTO";
+    case "IN_PROGRESS":
+      return "EN PROGRESO";
+    case "RESOLVED":
+      return "RESUELTO";
+    case "CLOSED":
+      return "CERRADO";
+    default:
+      return ticket.value.status;
+  }
 });
 
 // Mostrar asunto correctamente: subject (cuando venga) o title o "Sin asunto"
@@ -202,6 +262,28 @@ function formatDate(date: string | Date) {
     dateStyle: "short",
     timeStyle: "short",
   });
+}
+
+/* =============================
+   LOGOUT
+============================= */
+function handleLogout() {
+  logout();
+  router.push("/login");
+}
+const showLogoutModal = ref(false);
+
+function confirmLogout() {
+  showLogoutModal.value = true;
+}
+
+function cancelLogout() {
+  showLogoutModal.value = false;
+}
+
+function doLogout() {
+  logout();
+  router.push("/login");
 }
 
 /* =============================
@@ -224,7 +306,7 @@ const hasInitializedMessages = ref(false);
 
 function playNotification() {
   try {
-    const audio = new Audio("/sounds/Sonido_Notificacion.MP3");
+    const audio = new Audio("/sounds/Sonido_Notificacion.mp3");
     audio.play();
   } catch (e) {
     console.error("No se pudo reproducir el sonido de notificación:", e);
@@ -235,11 +317,10 @@ function playNotification() {
 watch(
   () => messages.value.length,
   async (newLen) => {
-    // Inicialización: primera carga de historial
     if (!hasInitializedMessages.value) {
       hasInitializedMessages.value = true;
       lastMessagesCount.value = newLen;
-      await scrollToBottom(true); // siempre bajamos al fondo al inicio
+      await scrollToBottom(true);
       return;
     }
 
@@ -255,12 +336,10 @@ watch(
 
     const isFromMe = lastMsg.senderId === currentUserId.value;
 
-    // si el mensaje no es mío → sonido
     if (!isFromMe) {
       playNotification();
     }
 
-    // SIEMPRE bajar al fondo cuando hay mensaje nuevo
     await scrollToBottom(true);
   }
 );
@@ -320,7 +399,6 @@ async function loadHistoryFallback() {
 
     const data = await res.json();
     messages.value = data;
-    // El scroll lo manejará el watch (primera vez)
   } catch (e) {
     console.error("Error al cargar historial REST:", e);
   }
@@ -350,16 +428,12 @@ function setupSocket() {
     console.log("🟢 WS conectado ticket cliente", ticketId);
   });
 
-  // historial que envía el gateway al conectar
   s.on("ticket_history", (history: TicketMessage[]) => {
     messages.value = history;
-    // el scroll lo maneja el watch de mensajes
   });
 
-  // mensajes nuevos
   s.on("ticket_message", (msg: TicketMessage) => {
     messages.value.push(msg);
-    // el scroll + sonido lo maneja el watch
   });
 
   s.on("disconnect", () => {
@@ -379,8 +453,6 @@ onMounted(() => {
 
   loadTicket();
   setupSocket();
-
-  // Por si algo falla con el WS, también cargamos historial por REST
   loadHistoryFallback();
 });
 
@@ -407,11 +479,9 @@ async function handleSend() {
   error.value = null;
 
   try {
-    // Intentar por socket primero
     if (socket.value && socket.value.connected) {
       socket.value.emit("send_message", { ticketId, content });
     } else {
-      // Fallback REST
       const res = await fetch(
         `http://localhost:3000/tickets/${ticketId}/messages`,
         {
@@ -430,7 +500,6 @@ async function handleSend() {
 
       const msg = await res.json();
       messages.value.push(msg);
-      // el watch se encarga de scroll y (si aplica) sonido
     }
 
     newMessage.value = "";

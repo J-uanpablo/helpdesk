@@ -1,27 +1,48 @@
 // src/users/users.controller.ts
-import { Controller, Get, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
 
 @Controller('users')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin') // 👈 todas estas rutas solo para admin
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  // Usuario autenticado: ver su propio perfil completo
-  @Get('me')
-  @UseGuards(JwtAuthGuard)
-  async getMe(@Req() req: any) {
-    const userId = req.user.id;
-    return this.usersService.findMe(userId);
+  // =======================
+  // 🔥 LISTAR AGENTES
+  // GET /users/agents
+  // =======================
+  @Get('agents')
+  listAgents() {
+    return this.usersService.listAgents();
   }
 
-  // Solo admin: ver todos los usuarios
-  @Get()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
-  async findAll() {
-    return this.usersService.findAll();
+  // =======================
+  // 🔥 CREAR AGENTE
+  // POST /users/agents
+  // =======================
+  @Post('agents')
+  createAgent(@Body() body: any) {
+    return this.usersService.createAgent(body);
+  }
+
+  // =======================
+  // 🔥 ACTUALIZAR AGENTE
+  // PATCH /users/agents/:id
+  // =======================
+  @Patch('agents/:id')
+  updateAgent(@Param('id') id: string, @Body() body: any) {
+    return this.usersService.updateAgent(Number(id), body);
   }
 }

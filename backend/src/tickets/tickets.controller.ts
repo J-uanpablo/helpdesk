@@ -51,8 +51,11 @@ export class TicketsController {
   @Get('panel-list')
   @UseGuards(RolesGuard)
   @Roles('support', 'admin')
-  async panelList() {
-    return this.ticketsService.getTicketsForPanel();
+  async panelList(@Req() req: any) {
+    return this.ticketsService.getTicketsForPanel({
+      id: req.user.id,
+      roles: req.user.roles || [],
+    });
   }
 
   // Ver un ticket concreto

@@ -1,8 +1,8 @@
 // src/auth/auth.service.ts
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class AuthService {
@@ -11,62 +11,64 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  // 1) Validar credenciales
-  async validateUser(email: string, password: string) {
+  /**
+   * Autentica por email/contraseña y genera JWT
+   */
+  async login(email: string, password: string) {
+    // 1) Buscar usuario (SIN include raro)
     const user = await this.prisma.user.findUnique({
       where: { email },
-      include: {
-        roles: {
-          include: {
-            role: true,
-          },
-        },
-      },
     });
 
     if (!user) {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
-    if (!isPasswordValid) {
+    // 2) Verificar contraseña
+    const isValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isValid) {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
-    const roles = user.roles.map((ur) => ur.role.name);
+    // 3) Sacar roles del usuario desde la tabla UserRole + Role
 
-    // No devolvemos el passwordHash
-    const { passwordHash, ...rest } = user;
+    // 3.1: buscar filas de userRole de ese usuario
+    const userRoles = await this.prisma.userRole.findMany({
+      where: { userId: user.id },
+    });
 
-    return {
-      ...rest,
-      roles,
-    };
-  }
+    // si no tiene filas, no tiene roles
+    let roles: string[] = [];
 
-  // 2) Login: genera el JWT
-  async login(email: string, password: string) {
-    if (!email || !password) {
-      throw new UnauthorizedException('Credenciales inválidas');
+    if (userRoles.length > 0) {
+      const roleIds = userRoles.map((ur) => ur.roleId);
+
+      // 3.2: buscar los roles por id
+      const rolesFromDb = await this.prisma.role.findMany({
+        where: { id: { in: roleIds } },
+      });
+
+      roles = rolesFromDb.map((r) => r.name);
     }
 
-    const user = await this.validateUser(email, password);
-
+    // 4) Payload del JWT
     const payload = {
       sub: user.id,
       email: user.email,
-      roles: user.roles,
+      roles, // 👈 MUY IMPORTANTE
     };
 
-    const accessToken = await this.jwtService.signAsync(payload);
+    // 5) Firmar token
+    const accessToken = this.jwtService.sign(payload);
 
+    // 6) Lo que enviamos al frontend
     return {
-      accessToken,
+      access_token: accessToken,
       user: {
         id: user.id,
-        email: user.email,
         name: user.name,
-        roles: user.roles,
+        email: user.email,
+        roles,
       },
     };
   }

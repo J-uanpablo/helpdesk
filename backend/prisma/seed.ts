@@ -31,24 +31,22 @@ async function main() {
 
   // 2) Usuario administrador
   const adminEmail = 'admin@itmsas.net';
-  const plainPassword = 'Admin123!'; // ⚠ cámbialo en producción
+  const adminPlainPassword = 'Admin123!'; // cámbialo en prod
 
-  const passwordHash = await bcrypt.hash(plainPassword, 10);
+  const adminPasswordHash = await bcrypt.hash(adminPlainPassword, 10);
 
   const adminUser = await prisma.user.upsert({
     where: { email: adminEmail },
     update: {},
     create: {
       email: adminEmail,
-      passwordHash,
+      passwordHash: adminPasswordHash,
       name: 'Super Admin',
       isActive: true,
+      // Admin normalmente no tiene supportArea
     },
   });
 
-  console.log('✅ Usuario admin creado/actualizado:', adminUser.email);
-
-  // 3) Asignar rol admin al usuario
   await prisma.userRole.upsert({
     where: {
       userId_roleId: {
@@ -63,10 +61,47 @@ async function main() {
     },
   });
 
-  console.log('✅ Rol admin asignado al usuario admin');
+  console.log('✅ Usuario admin creado/actualizado:', adminUser.email);
+
+  // 3) Usuario agente de Sistemas
+  const agenteEmail = 'agente.sistemas@itmsas.net';
+  const agentePlainPassword = 'Agente123!'; // cámbialo si quieres
+
+  const agentePasswordHash = await bcrypt.hash(agentePlainPassword, 10);
+
+  const agente = await prisma.user.upsert({
+    where: { email: agenteEmail },
+    update: {
+      supportArea: 'Sistemas',
+      isActive: true,
+    },
+    create: {
+      email: agenteEmail,
+      passwordHash: agentePasswordHash,
+      name: 'Agente Sistemas',
+      isActive: true,
+      supportArea: 'Sistemas',
+    },
+  });
+
+  await prisma.userRole.upsert({
+    where: {
+      userId_roleId: {
+        userId: agente.id,
+        roleId: rolesMap['support'].id,
+      },
+    },
+    update: {},
+    create: {
+      userId: agente.id,
+      roleId: rolesMap['support'].id,
+    },
+  });
+
+  console.log('✅ Agente de sistemas creado/actualizado:', agente.email);
   console.log('🎉 Seed completado. Credenciales de prueba:');
-  console.log(`   Email: ${adminEmail}`);
-  console.log(`   Password: ${plainPassword}`);
+  console.log(`   Admin  -> ${adminEmail} / ${adminPlainPassword}`);
+  console.log(`   Agente -> ${agenteEmail} / ${agentePlainPassword}`);
 }
 
 main()

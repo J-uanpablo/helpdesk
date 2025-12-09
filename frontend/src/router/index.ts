@@ -14,44 +14,48 @@ const routes: RouteRecordRaw[] = [
     name: "login",
     component: LoginView,
   },
+
+  // Panel de soporte (agentes)
   {
     path: "/soporte",
     name: "soporte",
     component: HelpdeskPanel,
     meta: { requiresAuth: true },
   },
+
+  // Bandeja de tickets del cliente
   {
     path: "/cliente",
     name: "cliente",
     component: ClientTicketsView,
     meta: { requiresAuth: true },
   },
+
+  // Crear nuevo ticket (cliente)
   {
     path: "/cliente/nuevo",
     name: "cliente-nuevo",
     component: ClientNewTicketView,
     meta: { requiresAuth: true },
   },
+
+  // Chat del ticket (cliente)
   {
-    path: "/tickets/:id",
+    path: "/cliente/tickets/:id",
     name: "ClientTicketChat",
     component: () => import("../views/ClientTicketChatView.vue"),
+    meta: { requiresAuth: true },
   },
-  {
-    path: "/cliente/ticket/:id",
-    name: "ClientTicketChat",
-    component: () => import("../views/ClientTicketChatView.vue"),
-  },
-  {
-    path: "/cliente/nuevo-ticket",
-    name: "ClientNewTicket",
-    component: () => import("../views/ClientNewTicketView.vue"),
-  },
+
+  // Admin: gestión de agentes
   {
     path: "/admin/agentes",
     name: "AdminAgents",
     component: () => import("../views/AdminAgentsView.vue"),
+    meta: { requiresAuth: true },
   },
+
+  // Redirección raíz
   {
     path: "/",
     redirect: "/login",
