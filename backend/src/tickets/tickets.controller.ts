@@ -41,16 +41,15 @@ export class TicketsController {
   // Ver todos los tickets (admin o soporte)
   @Get('list')
   @UseGuards(RolesGuard)
-  @Roles('support', 'admin')
+  @Roles('support', 'admin', 'super-admin')
   findAll() {
-    // tu servicio se llama "findAll"
     return this.ticketsService.findAll();
   }
 
   // Lista simplificada para el panel (ya existe en tu servicio)
   @Get('panel-list')
   @UseGuards(RolesGuard)
-  @Roles('support', 'admin')
+  @Roles('support', 'admin', 'super-admin') // 👈 AGREGAR super-admin
   async panelList(@Req() req: any) {
     return this.ticketsService.getTicketsForPanel({
       id: req.user.id,
@@ -84,7 +83,7 @@ export class TicketsController {
 
   @Patch(':id/status')
   @UseGuards(RolesGuard)
-  @Roles('support', 'admin')
+  @Roles('support', 'admin', 'super-admin')
   async updateStatus(
     @Param('id') id: string,
     @Body() dto: UpdateStatusDto,
@@ -104,7 +103,7 @@ export class TicketsController {
 
   @Patch(':id/assign')
   @UseGuards(RolesGuard)
-  @Roles('support', 'admin')
+  @Roles('support', 'admin', 'super-admin')
   async assign(
     @Param('id') id: string,
     @Body() dto: AssignTicketDto,
@@ -124,7 +123,7 @@ export class TicketsController {
 
   @Get(':id/history')
   @UseGuards(RolesGuard)
-  @Roles('support', 'admin', 'auditor')
+  @Roles('support', 'admin', 'auditor', 'super-admin')
   getHistory(@Param('id') id: string) {
     const ticketId = Number(id);
     // tu servicio se llama "getHistory"

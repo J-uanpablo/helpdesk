@@ -66,6 +66,7 @@ type StatusFilterValue =
 /* ===========================
    2) AUTENTICACIÓN (useAuth) + logout
 =========================== */
+const isSuperAdmin = computed(() => user.value?.roles?.includes("super-admin"));
 const router = useRouter();
 const { token, user, initAuth, logout } = useAuth();
 
@@ -575,6 +576,34 @@ function handleSend() {
           </p>
 
           <div class="flex gap-2 mt-1">
+            <!-- 👇 NUEVO botón: administración de agentes -->
+            <button
+              type="button"
+              class="h-8 px-3 rounded-md bg-amber-600 hover:bg-amber-700 text-xs font-semibold"
+              @click="router.push({ name: 'AdminClients' })"
+            >
+              Admin. clientes
+            </button>
+
+            <button
+              v-if="isSuperAdmin"
+              type="button"
+              class="h-8 px-3 rounded-md bg-sky-600 hover:bg-sky-700 text-xs font-semibold"
+              @click="router.push({ name: 'AdminAgents' })"
+            >
+              Admin. agentes
+            </button>
+
+            <!-- Ya existente: administración de áreas -->
+            <button
+              v-if="isSuperAdmin"
+              type="button"
+              class="h-8 px-3 rounded-md bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold"
+              @click="router.push({ path: '/admin/areas' })"
+            >
+              Admin. áreas
+            </button>
+
             <button
               type="button"
               @click="loadTickets"

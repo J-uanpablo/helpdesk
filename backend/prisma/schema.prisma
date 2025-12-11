@@ -14,6 +14,8 @@ model User {
   name         String
   isActive     Boolean    @default(true)
   supportArea  String?
+  cargo        String?
+  sede         String?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
@@ -65,7 +67,6 @@ model RolePermission {
 model Ticket {
   id          Int            @id @default(autoincrement())
   subject     String
-  title       String
   description String
   area        String?  // área a la que va dirigido el ticket
   status      TicketStatus   @default(PENDING)
@@ -129,4 +130,11 @@ model TicketMessage {
   createdAt DateTime @default(now())
 }
 
+model SupportArea {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
 

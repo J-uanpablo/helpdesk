@@ -8,41 +8,67 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
+import { UsersService } from './users.service';
+import { CreateAgentDto } from './dto/create-agent.dto';
+import { UpdateAgentDto } from './dto/update-agent.dto';
+import { CreateClientDto } from './dto/create-client.dto';
+import { UpdateClientDto } from './dto/update-client.dto';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('admin') // 👈 todas estas rutas solo para admin
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  // =======================
-  // 🔥 LISTAR AGENTES
-  // GET /users/agents
-  // =======================
+  // ============================================================
+  // 🔹 AGENTES / ADMINS
+  // ============================================================
+
+  // Listar agentes y admins
   @Get('agents')
+  @Roles('admin', 'super-admin')
   listAgents() {
-    return this.usersService.listAgents();
+    return this.usersService.listAgentsAndAdmins();
   }
 
-  // =======================
-  // 🔥 CREAR AGENTE
-  // POST /users/agents
-  // =======================
+  // Crear agente / admin
   @Post('agents')
-  createAgent(@Body() body: any) {
-    return this.usersService.createAgent(body);
+  @Roles('admin', 'super-admin')
+  createAgent(@Body() dto: CreateAgentDto) {
+    return this.usersService.createAgent(dto);
   }
 
-  // =======================
-  // 🔥 ACTUALIZAR AGENTE
-  // PATCH /users/agents/:id
-  // =======================
+  // Actualizar agente / admin
   @Patch('agents/:id')
-  updateAgent(@Param('id') id: string, @Body() body: any) {
-    return this.usersService.updateAgent(Number(id), body);
+  @Roles('admin', 'super-admin')
+  updateAgent(@Param('id') id: string, @Body() dto: UpdateAgentDto) {
+    return this.usersService.updateAgent(Number(id), dto);
+  }
+
+  // ============================================================
+  // 🔹 CLIENTES (usuarios finales)
+  // ============================================================
+
+  // Listar clientes
+  @Get('clients')
+  @Roles('super-admin')
+  async listClients() {
+    return this.usersService.listClients();
+  }
+
+  // Crear cliente
+  @Post('clients')
+  @Roles('super-admin')
+  async createClient(@Body() dto: CreateClientDto) {
+    return this.usersService.createClient(dto);
+  }
+
+  // Actualizar cliente
+  @Patch('clients/:id')
+  @Roles('super-admin')
+  async updateClient(@Param('id') id: string, @Body() dto: UpdateClientDto) {
+    return this.usersService.updateClient(Number(id), dto);
   }
 }

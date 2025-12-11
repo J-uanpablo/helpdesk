@@ -1,187 +1,361 @@
 // src/users/users.service.ts
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateAgentDto } from './dto/create-agent.dto';
+import { UpdateAgentDto } from './dto/update-agent.dto';
+import { CreateClientDto } from './dto/create-client.dto';
+import { UpdateClientDto } from './dto/update-client.dto';
 
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   // ============================================================
-  // 🔹 Helpers básicos (puede usarlos AuthService, etc.)
+  // 🔍 1) LISTAR AGENTES, ADMINS Y SUPER ADMINS
   // ============================================================
-
-  async findById(id: number) {
-    return this.prisma.user.findUnique({
-      where: { id },
-    });
-  }
-
-  /**
-   * Busca usuario por email.
-   * Además, carga los nombres de roles en un arreglo `roles`.
-   *
-   * OJO: no usamos include.userRoles porque el tipo no lo tiene.
-   * Consultamos la tabla intermedia userRole por separado.
-   */
-  async findByEmail(email: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (!user) {
-      return null;
-    }
-
-    // Traer los roles desde la tabla pivot UserRole
-    const userRoles = await this.prisma.userRole.findMany({
-      where: { userId: user.id },
+  async listAgentsAndAdmins() {
+    const users = await this.prisma.user.findMany({
+      where: {
+        roles: {
+          some: {
+            role: {
+              name: {
+                in: ['admin', 'support', 'super-admin'], // 👈 incluimos super-admin
+              },
+            },
+          },
+        },
+      },
       include: {
-        role: true,
+        roles: {
+          include: {
+            role: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'asc',
       },
     });
 
-    const roles = userRoles.map((ur) => ur.role.name);
+    return users.map((u) => {
+      const roleNames = u.roles.map((r) => r.role.name);
 
-    // Devolvemos el usuario + arreglo de nombres de rol
+      // Prioridad: super-admin > admin > support
+      const mainRole = roleNames.includes('super-admin')
+        ? 'super-admin'
+        : roleNames.includes('admin')
+          ? 'admin'
+          : roleNames.includes('support')
+            ? 'support'
+            : 'unknown';
+
+      return {
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        isActive: u.isActive,
+        supportArea: u.supportArea,
+        roles: roleNames,
+        mainRole,
+        createdAt: u.createdAt,
+      };
+    });
+  }
+
+  // ============================================================
+  // 🆕 2) CREAR NUEVO AGENTE / ADMIN / SUPER ADMIN
+  // ============================================================
+  async createAgent(dto: CreateAgentDto) {
+    const { email, password, name, role, supportArea } = dto;
+
+    // 👇 ahora permitimos también super-admin
+    if (!['admin', 'support', 'super-admin'].includes(role)) {
+      throw new BadRequestException('Rol inválido para agente');
+    }
+
+    const existing = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (existing) {
+      throw new BadRequestException(
+        'Ya existe un usuario registrado con ese correo',
+      );
+    }
+
+    const roleEntity = await this.prisma.role.findUnique({
+      where: { name: role },
+    });
+
+    if (!roleEntity) {
+      throw new BadRequestException(
+        `No existe el rol "${role}". Verifica tu seed de roles.`,
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const user = await this.prisma.$transaction(async (tx) => {
+      const newUser = await tx.user.create({
+        data: {
+          email,
+          passwordHash,
+          name,
+          isActive: true,
+          supportArea: supportArea ?? null,
+        },
+      });
+
+      await tx.userRole.create({
+        data: {
+          userId: newUser.id,
+          roleId: roleEntity.id,
+        },
+      });
+
+      return newUser;
+    });
+
     return {
-      ...user,
-      roles,
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      supportArea: user.supportArea,
+      isActive: user.isActive,
+      mainRole: role,
     };
   }
 
   // ============================================================
-  // 🔥 1) LISTAR AGENTES
-  //     - Solo usuarios con rol "support"
-  //     - Sin usar where.userRoles (que ya no existe en los tipos)
+  // ✏️ 3) ACTUALIZAR AGENTE / ADMIN / SUPER ADMIN
   // ============================================================
-  async listAgents() {
-    // 1) Buscar el rol "support"
-    const supportRole = await this.prisma.role.findUnique({
-      where: { name: 'support' },
-    });
-
-    if (!supportRole) {
-      throw new NotFoundException(
-        'No se encontró el rol "support". Ejecuta el seed para crearlo.',
-      );
-    }
-
-    // 2) Buscar todos los registros UserRole que tengan ese rol
-    const pivotRows = await this.prisma.userRole.findMany({
-      where: { roleId: supportRole.id },
-      select: { userId: true },
-    });
-
-    const userIds = pivotRows.map((p) => p.userId);
-
-    if (userIds.length === 0) {
-      return [];
-    }
-
-    // 3) Traer la info de esos usuarios
-    const agents = await this.prisma.user.findMany({
-      where: {
-        id: { in: userIds },
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        isActive: true,
-        supportArea: true,
-        createdAt: true,
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    return agents;
-  }
-
-  // ============================================================
-  // 🔥 2) CREAR AGENTE
-  // body esperado: { name, email, password, supportArea?, isActive? }
-  // ============================================================
-  async createAgent(body: {
-    name: string;
-    email: string;
-    password: string;
-    supportArea?: string | null;
-    isActive?: boolean;
-  }) {
-    const passwordHash = await bcrypt.hash(body.password, 10);
-
-    // 1) Crear usuario
-    const user = await this.prisma.user.create({
-      data: {
-        name: body.name,
-        email: body.email,
-        passwordHash,
-        isActive: body.isActive ?? true,
-        supportArea: body.supportArea ?? null,
-      },
-    });
-
-    // 2) Buscar rol "support"
-    const supportRole = await this.prisma.role.findUnique({
-      where: { name: 'support' },
-    });
-
-    if (!supportRole) {
-      throw new NotFoundException(
-        'No se encontró el rol "support". Ejecuta el seed para crearlo.',
-      );
-    }
-
-    // 3) Asignar rol "support" al usuario
-    await this.prisma.userRole.create({
-      data: {
-        userId: user.id,
-        roleId: supportRole.id,
-      },
-    });
-
-    return user;
-  }
-
-  // ============================================================
-  // 🔥 3) ACTUALIZAR AGENTE
-  // body puede traer: { name?, email?, password?, supportArea?, isActive? }
-  // ============================================================
-  async updateAgent(
-    id: number,
-    body: {
-      name?: string;
-      email?: string;
-      password?: string;
-      supportArea?: string | null;
-      isActive?: boolean;
-    },
-  ) {
-    const existing = await this.prisma.user.findUnique({
+  async updateAgent(id: number, dto: UpdateAgentDto) {
+    const user = await this.prisma.user.findUnique({
       where: { id },
+      include: {
+        roles: {
+          include: { role: true },
+        },
+      },
     });
 
-    if (!existing) {
-      throw new NotFoundException('Agente no encontrado');
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
     }
 
-    const data: any = {};
+    let passwordHash: string | undefined;
 
-    if (body.name !== undefined) data.name = body.name;
-    if (body.email !== undefined) data.email = body.email;
-    if (body.supportArea !== undefined) data.supportArea = body.supportArea;
-    if (body.isActive !== undefined) data.isActive = body.isActive;
+    if (dto.password) {
+      passwordHash = await bcrypt.hash(dto.password, 10);
+    }
 
-    if (body.password) {
-      data.passwordHash = await bcrypt.hash(body.password, 10);
+    // Si envían role, actualizamos el rol principal
+    if (
+      dto.role &&
+      ['admin', 'support', 'super-admin'].includes(dto.role) // 👈 también super-admin
+    ) {
+      const newRole = await this.prisma.role.findUnique({
+        where: { name: dto.role },
+      });
+
+      if (!newRole) {
+        throw new BadRequestException(`Rol ${dto.role} no existe`);
+      }
+
+      await this.prisma.$transaction(async (tx) => {
+        // Eliminamos relaciones actuales de roles "de staff"
+        await tx.userRole.deleteMany({
+          where: {
+            userId: user.id,
+            role: {
+              name: { in: ['admin', 'support', 'super-admin'] }, // 👈 borramos cualquiera de estos
+            },
+          },
+        });
+
+        // Creamos la relación con el nuevo rol
+        await tx.userRole.create({
+          data: {
+            userId: user.id,
+            roleId: newRole.id,
+          },
+        });
+      });
     }
 
     const updated = await this.prisma.user.update({
       where: { id },
-      data,
+      data: {
+        name: dto.name ?? user.name,
+        email: dto.email ?? user.email,
+        supportArea:
+          dto.supportArea !== undefined ? dto.supportArea : user.supportArea,
+        isActive: dto.isActive !== undefined ? dto.isActive : user.isActive,
+        ...(passwordHash ? { passwordHash } : {}),
+      },
+      include: {
+        roles: {
+          include: { role: true },
+        },
+      },
     });
 
-    return updated;
+    const roleNames = updated.roles.map((r) => r.role.name);
+
+    const mainRole = roleNames.includes('super-admin')
+      ? 'super-admin'
+      : roleNames.includes('admin')
+        ? 'admin'
+        : roleNames.includes('support')
+          ? 'support'
+          : 'unknown';
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      email: updated.email,
+      supportArea: updated.supportArea,
+      isActive: updated.isActive,
+      roles: roleNames,
+      mainRole,
+      createdAt: updated.createdAt,
+    };
+  }
+  // ============================================================
+  // 👥 4) CLIENTES (end-user)
+  // ============================================================
+  async listClients() {
+    const users = await this.prisma.user.findMany({
+      where: {
+        roles: {
+          some: {
+            role: {
+              name: 'end-user',
+            },
+          },
+        },
+      },
+      include: {
+        roles: { include: { role: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return users.map((u) => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      cargo: (u as any).cargo ?? null, // si añadiste estos campos al schema
+      sede: (u as any).sede ?? null,
+      supportArea: (u as any).supportArea ?? null,
+      isActive: u.isActive,
+      createdAt: u.createdAt,
+    }));
+  }
+
+  // =========================================
+  // 🆕 CREAR CLIENTE
+  // =========================================
+  async createClient(dto: CreateClientDto) {
+    const { name, email, cargo, sede, supportArea, password } = dto;
+
+    const existing = await this.prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      throw new BadRequestException(
+        'Ya existe un usuario registrado con ese correo',
+      );
+    }
+
+    const role = await this.prisma.role.findUnique({
+      where: { name: 'end-user' },
+    });
+
+    if (!role) {
+      throw new BadRequestException(
+        'No existe el rol "end-user". Revisa el seed de roles.',
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const user = await this.prisma.$transaction(async (tx) => {
+      const newUser = await tx.user.create({
+        data: {
+          email,
+          passwordHash,
+          name,
+          isActive: dto.isActive ?? true,
+          cargo: cargo ?? null,
+          sede: sede ?? null,
+          supportArea: supportArea ?? null, // 👈 área
+        },
+      });
+
+      await tx.userRole.create({
+        data: {
+          userId: newUser.id,
+          roleId: role.id,
+        },
+      });
+
+      return newUser;
+    });
+
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      cargo: (user as any).cargo ?? null,
+      sede: (user as any).sede ?? null,
+      supportArea: (user as any).supportArea ?? null,
+      isActive: user.isActive,
+    };
+  }
+
+  // =========================================
+  // ✏️ ACTUALIZAR CLIENTE
+  // =========================================
+  async updateClient(id: number, dto: UpdateClientDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
+    let passwordHash: string | undefined;
+    if (dto.password) {
+      passwordHash = await bcrypt.hash(dto.password, 10);
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: {
+        name: dto.name ?? user.name,
+        email: dto.email ?? user.email,
+        cargo: dto.cargo ?? (user as any).cargo,
+        sede: dto.sede ?? (user as any).sede,
+        supportArea: dto.supportArea ?? (user as any).supportArea, // 👈 área
+        isActive: dto.isActive ?? user.isActive,
+        ...(passwordHash ? { passwordHash } : {}),
+      },
+    });
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      email: updated.email,
+      cargo: (updated as any).cargo ?? null,
+      sede: (updated as any).sede ?? null,
+      supportArea: (updated as any).supportArea ?? null,
+      isActive: updated.isActive,
+    };
   }
 }

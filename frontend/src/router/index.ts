@@ -14,48 +14,74 @@ const routes: RouteRecordRaw[] = [
     name: "login",
     component: LoginView,
   },
-
-  // Panel de soporte (agentes)
   {
     path: "/soporte",
     name: "soporte",
     component: HelpdeskPanel,
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true }, // panel agente / super admin
   },
-
-  // Bandeja de tickets del cliente
   {
     path: "/cliente",
     name: "cliente",
     component: ClientTicketsView,
     meta: { requiresAuth: true },
   },
-
-  // Crear nuevo ticket (cliente)
   {
     path: "/cliente/nuevo",
     name: "cliente-nuevo",
     component: ClientNewTicketView,
     meta: { requiresAuth: true },
   },
-
-  // Chat del ticket (cliente)
   {
-    path: "/cliente/tickets/:id",
+    path: "/tickets/:id",
     name: "ClientTicketChat",
     component: () => import("../views/ClientTicketChatView.vue"),
     meta: { requiresAuth: true },
   },
+  {
+    path: "/cliente/ticket/:id",
+    name: "ClientTicketChatCliente",
+    component: () => import("../views/ClientTicketChatView.vue"),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: "/cliente/nuevo-ticket",
+    name: "ClientNewTicket",
+    component: () => import("../views/ClientNewTicketView.vue"),
+    meta: { requiresAuth: true },
+  },
 
-  // Admin: gestión de agentes
+  // 🔹 Vista de administración de AGENTES (solo super-admin)
   {
     path: "/admin/agentes",
     name: "AdminAgents",
     component: () => import("../views/AdminAgentsView.vue"),
-    meta: { requiresAuth: true },
+    meta: {
+      requiresAuth: true,
+      superAdminOnly: true,
+    },
   },
 
-  // Redirección raíz
+  // 🔹 Vista de administración de ÁREAS (solo super-admin)
+  {
+    path: "/admin/areas",
+    name: "AdminAreas",
+    component: () => import("../views/AdminSupportAreasView.vue"),
+    meta: {
+      requiresAuth: true,
+      superAdminOnly: true,
+    },
+  },
+  {
+    path: "/admin/clientes",
+    name: "AdminClients",
+    component: () => import("../views/AdminClientsView.vue"),
+    meta: {
+      requiresAuth: true,
+      superAdminOnly: true,
+    },
+  },
+
   {
     path: "/",
     redirect: "/login",
@@ -69,6 +95,16 @@ const router = createRouter({
 
 let authInitialized = false;
 
+// pequeña función helper para no repetirnos
+function isStaff(roles: string[] | undefined | null): boolean {
+  const list = roles || [];
+  return (
+    list.includes("admin") ||
+    list.includes("support") ||
+    list.includes("super-admin")
+  );
+}
+
 router.beforeEach((to, from, next) => {
   const { token, user, initAuth } = useAuth();
 
@@ -77,16 +113,36 @@ router.beforeEach((to, from, next) => {
     authInitialized = true;
   }
 
-  if (to.meta.requiresAuth && !token.value) {
+  const jwt = (token.value ?? "").trim();
+  const roles = user.value?.roles || [];
+
+  // 🔐 Rutas que requieren autenticación
+  if (to.meta.requiresAuth && !jwt) {
     return next({ name: "login" });
   }
 
-  if (to.name === "login" && token.value && user.value) {
-    const roles = user.value.roles || [];
-
-    if (roles.includes("admin") || roles.includes("support")) {
+  // 🔐 Si ya estoy logueado y voy a /login, redirijo según rol
+  if (to.name === "login" && jwt && user.value) {
+    if (isStaff(roles)) {
       return next({ name: "soporte" });
     } else {
+      return next({ name: "cliente" });
+    }
+  }
+
+  // 🔐 proteger /soporte para que solo entren staff (admin, support, super-admin)
+  if (to.name === "soporte" && jwt && user.value && !isStaff(roles)) {
+    return next({ name: "cliente" });
+  }
+
+  // 🔐 proteger /admin/* solo para super-admin
+  if (to.meta.superAdminOnly && jwt && user.value) {
+    if (!roles.includes("super-admin")) {
+      // si es staff normal, lo mando al panel de soporte
+      if (isStaff(roles)) {
+        return next({ name: "soporte" });
+      }
+      // si no es staff, al panel de cliente
       return next({ name: "cliente" });
     }
   }

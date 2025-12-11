@@ -1,92 +1,85 @@
-<!-- src/views/AdminAgentsView.vue -->
+<!-- src/views/AdminClientsView.vue -->
 <script setup lang="ts">
 import { reactive, ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useAuth } from "../composables/useAuth";
 
-interface AgentRow {
+interface AdminClient {
   id: number;
   name: string;
   email: string;
-  supportArea?: string | null;
+  cargo?: string | null;
+  sede?: string | null;
+  supportArea?: string | null; // texto libre
   isActive: boolean;
-  roles: string[];
-  mainRole: string; // 'admin', 'support', 'super-admin', etc.
   createdAt: string;
-}
-
-interface SupportArea {
-  id: number;
-  name: string;
-  isActive: boolean;
 }
 
 const router = useRouter();
 const { token, user, initAuth, logout } = useAuth();
 
-const agents = ref<AgentRow[]>([]);
-const supportAreas = ref<SupportArea[]>([]);
+const clients = ref<AdminClient[]>([]);
 const isLoading = ref(false);
 const error = ref<string | null>(null);
 
 // filtros
 const searchText = ref("");
+const sedeFilter = ref("all");
 const areaFilter = ref("all");
-const roleFilter = ref("all");
-const onlyActive = ref(false);
 
 // modales
 const showNewModal = ref(false);
 const showEditModal = ref(false);
 
 // toggles ver/ocultar contraseña
-const showNewAgentPassword = ref(false);
-const showEditAgentPassword = ref(false);
+const showNewClientPassword = ref(false);
+const showEditClientPassword = ref(false);
 
 // formularios
-const newAgentForm = reactive({
+const newClientForm = reactive({
   name: "",
   email: "",
+  cargo: "",
+  sede: "",
+  supportArea: "", // texto que escribes a mano
   password: "",
-  role: "support", // 'support' | 'admin' | 'super-admin'
-  supportArea: "",
   isActive: true,
 });
 
-const editAgentForm = reactive({
+const editClientForm = reactive({
   id: 0,
   name: "",
   email: "",
-  password: "",
-  role: "support",
+  cargo: "",
+  sede: "",
   supportArea: "",
+  password: "",
   isActive: true,
 });
 
-const filteredAgents = computed(() => {
+// helpers
+const filteredClients = computed(() => {
   const text = searchText.value.trim().toLowerCase();
+  const sede = sedeFilter.value;
   const area = areaFilter.value;
-  const role = roleFilter.value;
-  const onlyAct = onlyActive.value;
 
-  return agents.value.filter((a) => {
+  return clients.value.filter((c) => {
     const matchesText =
       !text ||
-      a.name.toLowerCase().includes(text) ||
-      a.email.toLowerCase().includes(text);
+      c.name.toLowerCase().includes(text) ||
+      c.email.toLowerCase().includes(text);
 
-    const areaValue = (a.supportArea || "").trim().toLowerCase();
+    const sedeValue = (c.sede || "").trim().toLowerCase();
+    const areaValue = (c.supportArea || "").trim().toLowerCase();
+
+    const matchesSede = sede === "all" || sedeValue === sede.toLowerCase();
     const matchesArea = area === "all" || areaValue === area.toLowerCase();
 
-    const matchesRole = role === "all" || a.mainRole === role;
-
-    const matchesActive = !onlyAct || a.isActive;
-
-    return matchesText && matchesArea && matchesRole && matchesActive;
+    return matchesText && matchesSede && matchesArea;
   });
 });
 
-const totalAgents = computed(() => agents.value.length);
+const totalClients = computed(() => clients.value.length);
 
 function formatDate(dateStr: string) {
   const d = new Date(dateStr);
@@ -94,58 +87,53 @@ function formatDate(dateStr: string) {
 }
 
 // =============================
-// Cargar agentes y áreas
+// Cargar clientes
 // =============================
-async function loadAgentsAndAreas() {
+async function loadClients() {
   error.value = null;
   if (!token.value) return;
 
   isLoading.value = true;
   try {
-    const [agentsRes, areasRes] = await Promise.all([
-      fetch("http://localhost:3000/users/agents", {
-        headers: { Authorization: `Bearer ${token.value}` },
-      }),
-      fetch("http://localhost:3000/support-areas", {
-        headers: { Authorization: `Bearer ${token.value}` },
-      }),
-    ]);
+    const res = await fetch("http://localhost:3000/users/clients", {
+      headers: {
+        Authorization: `Bearer ${token.value}`,
+      },
+    });
 
-    if (!agentsRes.ok) {
-      throw new Error(`Error ${agentsRes.status} al cargar agentes`);
-    }
-    if (!areasRes.ok) {
-      throw new Error(`Error ${areasRes.status} al cargar áreas`);
+    if (!res.ok) {
+      throw new Error(`Error ${res.status} al cargar los clientes`);
     }
 
-    agents.value = (await agentsRes.json()) as AgentRow[];
-    supportAreas.value = (await areasRes.json()) as SupportArea[];
+    const data = (await res.json()) as AdminClient[];
+    clients.value = data;
   } catch (e: any) {
     console.error(e);
-    error.value = e.message || "Error al cargar agentes/áreas";
+    error.value = e.message || "Error al cargar los clientes";
   } finally {
     isLoading.value = false;
   }
 }
 
 // =============================
-// Crear agente
+// Crear cliente
 // =============================
-async function createAgent() {
+async function createClient() {
   if (!token.value) return;
   error.value = null;
 
   try {
     const payload: any = {
-      name: newAgentForm.name.trim(),
-      email: newAgentForm.email.trim(),
-      password: newAgentForm.password,
-      role: newAgentForm.role, // 'support' | 'admin' | 'super-admin'
-      supportArea: newAgentForm.supportArea.trim() || undefined,
-      isActive: newAgentForm.isActive,
+      name: newClientForm.name.trim(),
+      email: newClientForm.email.trim(),
+      cargo: newClientForm.cargo.trim() || undefined,
+      sede: newClientForm.sede.trim() || undefined,
+      supportArea: newClientForm.supportArea.trim() || undefined,
+      password: newClientForm.password,
+      isActive: newClientForm.isActive,
     };
 
-    const res = await fetch("http://localhost:3000/users/agents", {
+    const res = await fetch("http://localhost:3000/users/clients", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -156,63 +144,69 @@ async function createAgent() {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.message || `Error ${res.status} al crear el agente`);
+      throw new Error(
+        data.message || `Error ${res.status} al crear el cliente`
+      );
     }
 
-    const created = (await res.json()) as AgentRow;
-    agents.value.push(created);
+    const created = (await res.json()) as AdminClient;
+    clients.value.push(created);
     showNewModal.value = false;
 
-    newAgentForm.name = "";
-    newAgentForm.email = "";
-    newAgentForm.password = "";
-    newAgentForm.role = "support";
-    newAgentForm.supportArea = "";
-    newAgentForm.isActive = true;
-    showNewAgentPassword.value = false;
+    // limpiar formulario
+    newClientForm.name = "";
+    newClientForm.email = "";
+    newClientForm.cargo = "";
+    newClientForm.sede = "";
+    newClientForm.supportArea = "";
+    newClientForm.password = "";
+    newClientForm.isActive = true;
+    showNewClientPassword.value = false;
   } catch (e: any) {
     console.error(e);
-    error.value = e.message || "Error al crear el agente";
+    error.value = e.message || "Error al crear el cliente";
   }
 }
 
 // =============================
-// Abrir modal edición
+// Abrir modal de edición
 // =============================
-function openEditAgent(a: AgentRow) {
-  editAgentForm.id = a.id;
-  editAgentForm.name = a.name;
-  editAgentForm.email = a.email;
-  editAgentForm.password = "";
-  editAgentForm.role = a.mainRole; // 'support' | 'admin' | 'super-admin'
-  editAgentForm.supportArea = a.supportArea || "";
-  editAgentForm.isActive = a.isActive;
-  showEditAgentPassword.value = false;
+function openEditClient(c: AdminClient) {
+  editClientForm.id = c.id;
+  editClientForm.name = c.name;
+  editClientForm.email = c.email;
+  editClientForm.cargo = c.cargo || "";
+  editClientForm.sede = c.sede || "";
+  editClientForm.supportArea = c.supportArea || "";
+  editClientForm.password = "";
+  editClientForm.isActive = c.isActive;
+  showEditClientPassword.value = false;
   showEditModal.value = true;
 }
 
 // =============================
-// Actualizar agente
+// Guardar cambios cliente
 // =============================
-async function updateAgent() {
+async function updateClient() {
   if (!token.value) return;
   error.value = null;
 
   try {
     const payload: any = {
-      name: editAgentForm.name.trim(),
-      email: editAgentForm.email.trim(),
-      role: editAgentForm.role,
-      supportArea: editAgentForm.supportArea.trim() || undefined,
-      isActive: editAgentForm.isActive,
+      name: editClientForm.name.trim(),
+      email: editClientForm.email.trim(),
+      cargo: editClientForm.cargo.trim() || undefined,
+      sede: editClientForm.sede.trim() || undefined,
+      supportArea: editClientForm.supportArea.trim() || undefined,
+      isActive: editClientForm.isActive,
     };
 
-    if (editAgentForm.password) {
-      payload.password = editAgentForm.password;
+    if (editClientForm.password) {
+      payload.password = editClientForm.password;
     }
 
     const res = await fetch(
-      `http://localhost:3000/users/agents/${editAgentForm.id}`,
+      `http://localhost:3000/users/clients/${editClientForm.id}`,
       {
         method: "PATCH",
         headers: {
@@ -226,53 +220,56 @@ async function updateAgent() {
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(
-        data.message || `Error ${res.status} al actualizar el agente`
+        data.message || `Error ${res.status} al actualizar el cliente`
       );
     }
 
-    const updated = (await res.json()) as AgentRow;
-    const idx = agents.value.findIndex((x) => x.id === updated.id);
+    const updated = (await res.json()) as AdminClient;
+
+    const idx = clients.value.findIndex((c) => c.id === updated.id);
     if (idx !== -1) {
-      agents.value[idx] = updated;
+      clients.value[idx] = updated;
     }
 
     showEditModal.value = false;
   } catch (e: any) {
     console.error(e);
-    error.value = e.message || "Error al actualizar el agente";
+    error.value = e.message || "Error al actualizar el cliente";
   }
 }
 
 // =============================
-// Activar / desactivar agente
+// Activar / desactivar cliente
 // =============================
-async function toggleAgentActive(a: AgentRow) {
+async function toggleClientActive(c: AdminClient) {
   if (!token.value) return;
   error.value = null;
 
   try {
-    const res = await fetch(`http://localhost:3000/users/agents/${a.id}`, {
+    const res = await fetch(`http://localhost:3000/users/clients/${c.id}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token.value}`,
       },
-      body: JSON.stringify({ isActive: !a.isActive }),
+      body: JSON.stringify({ isActive: !c.isActive }),
     });
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.message || `Error ${res.status} al cambiar estado`);
+      throw new Error(
+        data.message || `Error ${res.status} al actualizar el estado`
+      );
     }
 
-    const updated = (await res.json()) as AgentRow;
-    const idx = agents.value.findIndex((x) => x.id === updated.id);
+    const updated = (await res.json()) as AdminClient;
+    const idx = clients.value.findIndex((x) => x.id === updated.id);
     if (idx !== -1) {
-      agents.value[idx] = updated;
+      clients.value[idx] = updated;
     }
   } catch (e: any) {
     console.error(e);
-    error.value = e.message || "Error al cambiar estado del agente";
+    error.value = e.message || "Error al cambiar estado del cliente";
   }
 }
 
@@ -291,7 +288,7 @@ onMounted(async () => {
     router.push({ name: "login" });
     return;
   }
-  await loadAgentsAndAreas();
+  await loadClients();
 });
 </script>
 
@@ -304,14 +301,13 @@ onMounted(async () => {
       >
         <div>
           <p class="text-xs text-slate-400 mb-1">
-            Administración de agentes y roles
+            Administración de usuarios finales
           </p>
           <h1 class="text-2xl md:text-3xl font-bold">
-            Administración de agentes
+            Administración de clientes
           </h1>
           <p class="text-xs text-slate-400">
-            Crea y gestiona los usuarios de soporte, administradores y
-            superadministradores.
+            Crea y gestiona los usuarios finales que usan la mesa de ayuda.
           </p>
         </div>
 
@@ -340,7 +336,7 @@ onMounted(async () => {
               @click="showNewModal = true"
               class="h-8 px-3 rounded-md bg-emerald-500 hover:bg-emerald-600 text-xs font-semibold"
             >
-              Nuevo agente
+              Nuevo cliente
             </button>
 
             <button
@@ -372,7 +368,7 @@ onMounted(async () => {
             />
           </div>
 
-          <!-- Filtros por área, rol, estado -->
+          <!-- Filtro Área + Sede -->
           <div class="flex flex-wrap items-center gap-3">
             <div class="flex items-center gap-2">
               <label class="text-xs text-slate-400">Área:</label>
@@ -380,12 +376,12 @@ onMounted(async () => {
                 v-model="areaFilter"
                 class="rounded-md bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                <option value="all">Todas</option>
+                <option value="all">Todas las áreas</option>
                 <option
                   v-for="a in Array.from(
                     new Set(
-                      agents
-                        .map((ag) => (ag.supportArea || '').trim())
+                      clients
+                        .map((c) => (c.supportArea || '').trim())
                         .filter((x) => x)
                     )
                   )"
@@ -398,31 +394,30 @@ onMounted(async () => {
             </div>
 
             <div class="flex items-center gap-2">
-              <label class="text-xs text-slate-400">Rol:</label>
+              <label class="text-xs text-slate-400">Sede:</label>
               <select
-                v-model="roleFilter"
+                v-model="sedeFilter"
                 class="rounded-md bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                <option value="all">Todos</option>
-                <option value="support">Soporte</option>
-                <option value="admin">Administrador</option>
-                <option value="super-admin">Super administrador</option>
+                <option value="all">Todas las sedes</option>
+                <option
+                  v-for="s in Array.from(
+                    new Set(
+                      clients.map((c) => (c.sede || '').trim()).filter((x) => x)
+                    )
+                  )"
+                  :key="s"
+                  :value="s"
+                >
+                  {{ s }}
+                </option>
               </select>
             </div>
-
-            <label class="flex items-center gap-1 text-[11px] text-slate-300">
-              <input
-                v-model="onlyActive"
-                type="checkbox"
-                class="w-3 h-3 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500"
-              />
-              Solo activos
-            </label>
           </div>
         </div>
 
         <p class="text-[11px] text-slate-500">
-          Mostrando {{ filteredAgents.length }} de {{ totalAgents }} agentes.
+          Mostrando {{ filteredClients.length }} de {{ totalClients }} clientes.
         </p>
 
         <p v-if="error" class="text-[11px] text-rose-400">
@@ -430,14 +425,15 @@ onMounted(async () => {
         </p>
 
         <!-- tabla -->
-        <div class="overflow-x-auto rounded-xl border border-slate-800">
+        <div class="Overflow-x-auto rounded-xl border border-slate-800">
           <table class="min-w-full text-xs">
             <thead class="bg-slate-900/70 text-slate-400">
               <tr>
                 <th class="px-4 py-2 text-left font-semibold">Nombre</th>
                 <th class="px-4 py-2 text-left font-semibold">Correo</th>
-                <th class="px-4 py-2 text-left font-semibold">Rol</th>
-                <th class="px-4 py-2 text-left font-semibold">Área soporte</th>
+                <th class="px-4 py-2 text-left font-semibold">Cargo</th>
+                <th class="px-4 py-2 text-left font-semibold">Área</th>
+                <th class="px-4 py-2 text-left font-semibold">Sede</th>
                 <th class="px-4 py-2 text-left font-semibold">Estado</th>
                 <th class="px-4 py-2 text-left font-semibold">Creado</th>
                 <th class="px-4 py-2 text-left font-semibold">Acciones</th>
@@ -448,84 +444,78 @@ onMounted(async () => {
                 v-if="isLoading"
                 class="border-t border-slate-800 bg-slate-950/60"
               >
-                <td colspan="7" class="px-4 py-6 text-center text-slate-500">
-                  Cargando agentes...
+                <td colspan="8" class="px-4 py-6 text-center text-slate-500">
+                  Cargando clientes...
                 </td>
               </tr>
 
               <tr
-                v-else-if="!filteredAgents.length"
+                v-else-if="!filteredClients.length"
                 class="border-t border-slate-800 bg-slate-950/60"
               >
-                <td colspan="7" class="px-4 py-6 text-center text-slate-500">
-                  No hay agentes que coincidan con los filtros seleccionados.
+                <td colspan="8" class="px-4 py-6 text-center text-slate-500">
+                  No hay clientes que coincidan con los filtros seleccionados.
                 </td>
               </tr>
 
               <tr
-                v-for="a in filteredAgents"
-                :key="a.id"
+                v-for="c in filteredClients"
+                :key="c.id"
                 class="border-t border-slate-800 hover:bg-slate-900/60"
               >
                 <td class="px-4 py-2">
                   <div class="flex flex-col">
                     <span class="font-semibold text-slate-100">
-                      {{ a.name }}
+                      {{ c.name }}
                     </span>
                     <span class="text-[10px] text-slate-500">
-                      ID: {{ a.id }}
+                      ID: {{ c.id }}
                     </span>
                   </div>
                 </td>
 
                 <td class="px-4 py-2 text-slate-200">
-                  {{ a.email }}
+                  {{ c.email }}
                 </td>
 
                 <td class="px-4 py-2 text-slate-200">
-                  <span
-                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-slate-800/80"
-                  >
-                    {{
-                      a.mainRole === "super-admin"
-                        ? "Super administrador"
-                        : a.mainRole === "admin"
-                        ? "Administrador"
-                        : "Soporte"
-                    }}
-                  </span>
+                  {{ c.cargo || "—" }}
                 </td>
 
                 <td class="px-4 py-2 text-slate-200">
-                  {{ a.supportArea || "—" }}
+                  {{ c.supportArea || "—" }}
+                </td>
+
+                <td class="px-4 py-2 text-slate-200">
+                  {{ c.sede || "—" }}
                 </td>
 
                 <td class="px-4 py-2">
                   <span
                     class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px]"
                     :class="
-                      a.isActive
+                      c.isActive
                         ? 'bg-emerald-500/10 text-emerald-300'
                         : 'bg-slate-700/60 text-slate-300'
                     "
                   >
                     <span
                       class="w-1.5 h-1.5 rounded-full"
-                      :class="a.isActive ? 'bg-emerald-400' : 'bg-slate-400'"
+                      :class="c.isActive ? 'bg-emerald-400' : 'bg-slate-400'"
                     ></span>
-                    {{ a.isActive ? "Activo" : "Inactivo" }}
+                    {{ c.isActive ? "Activo" : "Inactivo" }}
                   </span>
                 </td>
 
                 <td class="px-4 py-2 text-slate-400">
-                  {{ formatDate(a.createdAt) }}
+                  {{ formatDate(c.createdAt) }}
                 </td>
 
                 <td class="px-4 py-2">
                   <div class="flex gap-2">
                     <button
                       class="px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-[10px] font-semibold"
-                      @click="openEditAgent(a)"
+                      @click="openEditClient(c)"
                     >
                       Editar
                     </button>
@@ -533,13 +523,13 @@ onMounted(async () => {
                     <button
                       class="px-2 py-1 rounded-md text-[10px] font-semibold"
                       :class="
-                        a.isActive
+                        c.isActive
                           ? 'bg-amber-500/80 hover:bg-amber-500 text-slate-900'
                           : 'bg-emerald-500 hover:bg-emerald-600 text-slate-900'
                       "
-                      @click="toggleAgentActive(a)"
+                      @click="toggleClientActive(c)"
                     >
-                      {{ a.isActive ? "Desactivar" : "Activar" }}
+                      {{ c.isActive ? "Desactivar" : "Activar" }}
                     </button>
                   </div>
                 </td>
@@ -549,7 +539,7 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- MODAL NUEVO AGENTE -->
+      <!-- MODAL NUEVO CLIENTE -->
       <div
         v-if="showNewModal"
         class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
@@ -557,16 +547,16 @@ onMounted(async () => {
         <div
           class="w-full max-w-md bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-xl"
         >
-          <h2 class="text-lg font-semibold mb-1">Nuevo agente</h2>
+          <h2 class="text-lg font-semibold mb-1">Nuevo cliente</h2>
           <p class="text-[11px] text-slate-400 mb-4">
-            Crea un usuario de soporte, administrador o superadministrador.
+            Crea un usuario final que pueda crear y consultar tickets.
           </p>
 
           <div class="space-y-3 text-xs">
             <div class="space-y-1">
               <label class="block text-slate-300">Nombre completo</label>
               <input
-                v-model="newAgentForm.name"
+                v-model="newClientForm.name"
                 type="text"
                 class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
@@ -575,64 +565,70 @@ onMounted(async () => {
             <div class="space-y-1">
               <label class="block text-slate-300">Correo</label>
               <input
-                v-model="newAgentForm.email"
+                v-model="newClientForm.email"
                 type="email"
                 class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
 
             <div class="space-y-1">
-              <label class="block text-slate-300">Rol</label>
-              <select
-                v-model="newAgentForm.role"
+              <label class="block text-slate-300">Cargo</label>
+              <input
+                v-model="newClientForm.cargo"
+                type="text"
                 class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                <option value="support">Soporte</option>
-                <option value="admin">Administrador</option>
-                <option value="super-admin">Super administrador</option>
-              </select>
+              />
             </div>
 
             <div class="space-y-1">
-              <label class="block text-slate-300">Área de soporte</label>
-              <select
-                v-model="newAgentForm.supportArea"
+              <label class="block text-slate-300">Área</label>
+              <input
+                v-model="newClientForm.supportArea"
+                type="text"
                 class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                <option value="">(Sin área asignada)</option>
-                <option v-for="a in supportAreas" :key="a.id" :value="a.name">
-                  {{ a.name }}
-                </option>
-              </select>
+                placeholder="Ej: Sistemas, Talento humano..."
+              />
+            </div>
+
+            <div class="space-y-1">
+              <label class="block text-slate-300">Sede</label>
+              <input
+                v-model="newClientForm.sede"
+                type="text"
+                class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
             </div>
 
             <div class="space-y-1">
               <label class="block text-slate-300">Contraseña inicial</label>
               <div class="relative">
                 <input
-                  v-model="newAgentForm.password"
-                  :type="showNewAgentPassword ? 'text' : 'password'"
+                  v-model="newClientForm.password"
+                  :type="showNewClientPassword ? 'text' : 'password'"
                   class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 pr-16 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
                 <button
                   type="button"
                   class="absolute inset-y-0 right-2 text-[10px] text-slate-400 hover:text-slate-200"
-                  @click="showNewAgentPassword = !showNewAgentPassword"
+                  @click="showNewClientPassword = !showNewClientPassword"
                 >
-                  {{ showNewAgentPassword ? "Ocultar" : "Ver" }}
+                  {{ showNewClientPassword ? "Ocultar" : "Ver" }}
                 </button>
               </div>
+              <p class="text-[10px] text-slate-500">
+                El cliente podrá cambiarla más adelante (implementación futura).
+              </p>
             </div>
 
             <div class="flex items-center gap-2 mt-1">
               <input
-                v-model="newAgentForm.isActive"
-                id="newAgentActive"
+                v-model="newClientForm.isActive"
+                id="newClientActive"
                 type="checkbox"
                 class="w-3 h-3 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500"
               />
-              <label for="newAgentActive" class="text-[11px] text-slate-300">
-                Agente activo
+              <label for="newClientActive" class="text-[11px] text-slate-300">
+                Cliente activo
               </label>
             </div>
           </div>
@@ -649,19 +645,19 @@ onMounted(async () => {
               type="button"
               class="px-3 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 font-semibold disabled:opacity-50"
               :disabled="
-                !newAgentForm.name ||
-                !newAgentForm.email ||
-                !newAgentForm.password
+                !newClientForm.name ||
+                !newClientForm.email ||
+                !newClientForm.password
               "
-              @click="createAgent"
+              @click="createClient"
             >
-              Crear agente
+              Crear cliente
             </button>
           </div>
         </div>
       </div>
 
-      <!-- MODAL EDITAR AGENTE -->
+      <!-- MODAL EDITAR CLIENTE -->
       <div
         v-if="showEditModal"
         class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
@@ -669,16 +665,16 @@ onMounted(async () => {
         <div
           class="w-full max-w-md bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-xl"
         >
-          <h2 class="text-lg font-semibold mb-1">Editar agente</h2>
+          <h2 class="text-lg font-semibold mb-1">Editar cliente</h2>
           <p class="text-[11px] text-slate-400 mb-4">
-            Actualiza los datos del agente o administrador.
+            Actualiza los datos del usuario final.
           </p>
 
           <div class="space-y-3 text-xs">
             <div class="space-y-1">
               <label class="block text-slate-300">Nombre completo</label>
               <input
-                v-model="editAgentForm.name"
+                v-model="editClientForm.name"
                 type="text"
                 class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
@@ -687,65 +683,68 @@ onMounted(async () => {
             <div class="space-y-1">
               <label class="block text-slate-300">Correo</label>
               <input
-                v-model="editAgentForm.email"
+                v-model="editClientForm.email"
                 type="email"
                 class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
 
             <div class="space-y-1">
-              <label class="block text-slate-300">Rol</label>
-              <select
-                v-model="editAgentForm.role"
+              <label class="block text-slate-300">Cargo</label>
+              <input
+                v-model="editClientForm.cargo"
+                type="text"
                 class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                <option value="support">Soporte</option>
-                <option value="admin">Administrador</option>
-                <option value="super-admin">Super administrador</option>
-              </select>
+              />
             </div>
 
             <div class="space-y-1">
-              <label class="block text-slate-300">Área de soporte</label>
-              <select
-                v-model="editAgentForm.supportArea"
+              <label class="block text-slate-300">Área</label>
+              <input
+                v-model="editClientForm.supportArea"
+                type="text"
                 class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                <option value="">(Sin área asignada)</option>
-                <option v-for="a in supportAreas" :key="a.id" :value="a.name">
-                  {{ a.name }}
-                </option>
-              </select>
+                placeholder="Ej: Sistemas, Talento humano..."
+              />
+            </div>
+
+            <div class="space-y-1">
+              <label class="block text-slate-300">Sede</label>
+              <input
+                v-model="editClientForm.sede"
+                type="text"
+                class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
             </div>
 
             <div class="space-y-1">
               <label class="block text-slate-300">Nueva contraseña</label>
               <div class="relative">
                 <input
-                  v-model="editAgentForm.password"
-                  :type="showEditAgentPassword ? 'text' : 'password'"
+                  v-model="editClientForm.password"
+                  :type="showEditClientPassword ? 'text' : 'password'"
                   class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 pr-16 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   placeholder="Dejar en blanco para no cambiarla"
                 />
                 <button
                   type="button"
                   class="absolute inset-y-0 right-2 text-[10px] text-slate-400 hover:text-slate-200"
-                  @click="showEditAgentPassword = !showEditAgentPassword"
+                  @click="showEditClientPassword = !showEditClientPassword"
                 >
-                  {{ showEditAgentPassword ? "Ocultar" : "Ver" }}
+                  {{ showEditClientPassword ? "Ocultar" : "Ver" }}
                 </button>
               </div>
             </div>
 
             <div class="flex items-center gap-2 mt-1">
               <input
-                v-model="editAgentForm.isActive"
-                id="editAgentActive"
+                v-model="editClientForm.isActive"
+                id="editClientActive"
                 type="checkbox"
                 class="w-3 h-3 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500"
               />
-              <label for="editAgentActive" class="text-[11px] text-slate-300">
-                Agente activo
+              <label for="editClientActive" class="text-[11px] text-slate-300">
+                Cliente activo
               </label>
             </div>
           </div>
@@ -761,7 +760,7 @@ onMounted(async () => {
             <button
               type="button"
               class="px-3 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 font-semibold"
-              @click="updateAgent"
+              @click="updateClient"
             >
               Guardar cambios
             </button>

@@ -29,14 +29,14 @@ export class TicketsService {
 
     const ticket = await this.prisma.ticket.create({
       data: {
-        title: subject,
+        subject, // 👈 ahora usamos subject en la BD
         description,
         area,
         createdById: userId,
       },
       select: {
         id: true,
-        title: true,
+        subject: true, // 👈 y lo seleccionamos como subject
         status: true,
         createdAt: true,
         updatedAt: true,
@@ -55,7 +55,7 @@ export class TicketsService {
 
     return {
       id: ticket.id,
-      subject: ticket.title,
+      subject: ticket.subject,
       status: ticket.status,
       createdAt: ticket.createdAt,
       updatedAt: ticket.updatedAt,
@@ -72,7 +72,7 @@ export class TicketsService {
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
-        title: true,
+        subject: true, // 👈 ya no title
         status: true,
         createdAt: true,
         updatedAt: true,
@@ -82,7 +82,7 @@ export class TicketsService {
 
     return rows.map((t) => ({
       id: t.id,
-      subject: t.title,
+      subject: t.subject,
       status: t.status,
       createdAt: t.createdAt,
       updatedAt: t.updatedAt,
@@ -212,7 +212,10 @@ export class TicketsService {
   // 🔥 10) LISTA RESUMIDA PARA EL PANEL DE ADMIN / AGENTE
   // ============================================================
   async getTicketsForPanel(currentUser?: { id: number; roles?: string[] }) {
-    const isAdmin = currentUser?.roles?.includes('admin') ?? false;
+    const isAdmin =
+      currentUser?.roles?.includes('admin') ||
+      currentUser?.roles?.includes('super-admin') ||
+      false;
 
     const where: any = {};
 
@@ -231,7 +234,7 @@ export class TicketsService {
 
     return tickets.map((t: any) => ({
       id: t.id,
-      subject: t.title,
+      subject: t.subject, // 👈 ya no usamos title
       status: t.status,
       createdAt: t.createdAt,
       updatedAt: t.updatedAt,

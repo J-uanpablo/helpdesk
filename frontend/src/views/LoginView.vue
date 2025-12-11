@@ -9,8 +9,18 @@ const { login, isAuthLoading, authError, token, user, initAuth } = useAuth();
 
 const email = ref("");
 const password = ref("");
+const showPassword = ref(false); // 👈 toggle ver/ocultar
 
 initAuth(); // por si ya había sesión guardada
+
+function isStaff(roles: string[] | undefined | null): boolean {
+  const list = roles || [];
+  return (
+    list.includes("admin") ||
+    list.includes("support") ||
+    list.includes("super-admin")
+  );
+}
 
 async function handleSubmit() {
   if (!email.value.trim() || !password.value.trim()) {
@@ -24,14 +34,14 @@ async function handleSubmit() {
     if (token.value && user.value) {
       const roles = user.value.roles || [];
 
-      if (roles.includes("admin") || roles.includes("support")) {
+      if (isStaff(roles)) {
         await router.push({ name: "soporte" });
       } else {
         await router.push({ name: "cliente" });
       }
     }
   } catch {
-    // el error ya se guarda en authError, aquí no hace falta más
+    // el error ya se guarda en authError
   }
 }
 </script>
@@ -62,13 +72,22 @@ async function handleSubmit() {
 
         <div class="space-y-1">
           <label class="block text-xs text-slate-300">Contraseña</label>
-          <input
-            v-model="password"
-            type="password"
-            class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            placeholder="••••••••"
-            required
-          />
+          <div class="relative">
+            <input
+              v-model="password"
+              :type="showPassword ? 'text' : 'password'"
+              class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-2 pr-16 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              placeholder="••••••••"
+              required
+            />
+            <button
+              type="button"
+              class="absolute inset-y-0 right-2 text-[11px] text-slate-400 hover:text-slate-200"
+              @click="showPassword = !showPassword"
+            >
+              {{ showPassword ? "Ocultar" : "Ver" }}
+            </button>
+          </div>
         </div>
 
         <p v-if="authError" class="text-[11px] text-rose-400">
