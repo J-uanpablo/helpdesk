@@ -8,27 +8,31 @@ datasource db {
 }
 
 model User {
-  id           Int        @id @default(autoincrement())
-  email        String     @unique
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
   passwordHash String
   name         String
-  isActive     Boolean    @default(true)
+  isActive     Boolean  @default(true)
   supportArea  String?
+  clientArea   String?
   cargo        String?
   sede         String?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   // Roles y permisos
-  roles           UserRole[]
+  roles              UserRole[]
   // Tickets que el usuario creó
-  ticketsCreated  Ticket[]        @relation("TicketCreatedBy")
+  ticketsCreated     Ticket[]        @relation("TicketCreatedBy")
   // Tickets asignados al usuario
-  ticketsAssigned Ticket[]        @relation("TicketAssignedTo")
+  ticketsAssigned    Ticket[]        @relation("TicketAssignedTo")
   // Cambios realizados en tickets
-  historyChanges  TicketHistory[] @relation("TicketHistoryChangedBy")
+  historyChanges     TicketHistory[] @relation("TicketHistoryChangedBy")
   // Mensajes enviados en tickets (chat)
   ticketMessagesSent TicketMessage[] @relation("TicketMessageSender")
+
+  // ✅ RELACIÓN INVERSA OBLIGATORIA PARA RESET PASSWORD
+  passwordResetTokens PasswordResetToken[]
 }
 
 model Role {
@@ -64,16 +68,35 @@ model RolePermission {
   @@id([roleId, permissionId])
 }
 
+model TicketAttachment {
+  id        Int  @id @default(autoincrement())
+  ticketId  Int
+  messageId Int?
+
+  // ✅ nombre original que subió el usuario (para mostrar en UI)
+  originalName String
+
+  // nombre físico guardado en disco
+  filename  String
+  path      String
+  mimeType  String
+  size      Int
+  createdAt DateTime @default(now())
+
+  ticket  Ticket         @relation(fields: [ticketId], references: [id])
+  message TicketMessage? @relation(fields: [messageId], references: [id])
+}
+
 model Ticket {
-  id          Int            @id @default(autoincrement())
+  id          Int                @id @default(autoincrement())
   subject     String
   description String
-  area        String?  // área a la que va dirigido el ticket
-  status      TicketStatus   @default(PENDING)
-  priority    TicketPriority @default(MEDIUM)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
-
+  area        String? // área a la que va dirigido el ticket
+  status      TicketStatus       @default(PENDING)
+  priority    TicketPriority     @default(MEDIUM)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  attachments TicketAttachment[]
 
   // Usuario que creó el ticket
   createdById Int
@@ -84,8 +107,8 @@ model Ticket {
   assignedTo   User? @relation("TicketAssignedTo", fields: [assignedToId], references: [id])
 
   // Historial de cambios del ticket
-  history TicketHistory[]
-  messages TicketMessage[]    
+  history  TicketHistory[]
+  messages TicketMessage[]
 }
 
 model TicketHistory {
@@ -118,16 +141,18 @@ enum TicketPriority {
   HIGH
   URGENT
 }
+
 model TicketMessage {
-  id        Int      @id @default(autoincrement())
-  ticketId  Int
-  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  ticketId Int
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
 
-  senderId  Int
-  sender    User     @relation("TicketMessageSender", fields: [senderId], references: [id])
+  senderId Int
+  sender   User @relation("TicketMessageSender", fields: [senderId], references: [id])
 
-  content   String
-  createdAt DateTime @default(now())
+  content     String
+  createdAt   DateTime           @default(now())
+  attachments TicketAttachment[]
 }
 
 model SupportArea {
@@ -138,3 +163,16 @@ model SupportArea {
   updatedAt DateTime @updatedAt
 }
 
+model PasswordResetToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  tokenHash String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([tokenHash])
+}
