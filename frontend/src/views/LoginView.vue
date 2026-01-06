@@ -101,6 +101,15 @@ async function handleSubmit() {
         >
           {{ isAuthLoading ? "Iniciando sesión..." : "Entrar" }}
         </button>
+        <!-- debajo del botón Entrar -->
+        <div class="flex justify-end mt-3">
+          <RouterLink
+            :to="{ name: 'forgot-password' }"
+            class="text-[11px] text-slate-400 hover:text-emerald-400"
+          >
+            ¿Olvidaste tu contraseña?
+          </RouterLink>
+        </div>
       </form>
     </div>
   </div>
