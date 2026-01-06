@@ -263,7 +263,7 @@ export class UsersService {
   // 🆕 CREAR CLIENTE
   // =========================================
   async createClient(dto: CreateClientDto) {
-    const { name, email, cargo, sede, supportArea, password } = dto;
+    const { name, email, cargo, sede, password, clientArea } = dto as any;
 
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) {
@@ -282,7 +282,13 @@ export class UsersService {
       );
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    if (!password || !String(password).trim()) {
+      throw new BadRequestException(
+        'Debes enviar una contraseña para el cliente',
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(String(password), 10);
 
     const user = await this.prisma.$transaction(async (tx) => {
       const newUser = await tx.user.create({
@@ -291,9 +297,15 @@ export class UsersService {
           passwordHash,
           name,
           isActive: dto.isActive ?? true,
+
           cargo: cargo ?? null,
           sede: sede ?? null,
-          supportArea: supportArea ?? null, // 👈 área
+
+          // ✅ Área del cliente (texto libre)
+          clientArea: clientArea ?? null,
+
+          // ⛔️ NO uses supportArea para clientes
+          supportArea: null,
         },
       });
 
@@ -313,7 +325,7 @@ export class UsersService {
       email: user.email,
       cargo: (user as any).cargo ?? null,
       sede: (user as any).sede ?? null,
-      supportArea: (user as any).supportArea ?? null,
+      clientArea: (user as any).clientArea ?? null,
       isActive: user.isActive,
     };
   }
@@ -330,9 +342,14 @@ export class UsersService {
       throw new NotFoundException('Cliente no encontrado');
     }
 
+    // ✅ si llega password, se actualiza
     let passwordHash: string | undefined;
-    if (dto.password) {
-      passwordHash = await bcrypt.hash(dto.password, 10);
+    if (dto.password !== undefined) {
+      const pwd = String(dto.password || '').trim();
+      if (!pwd) {
+        throw new BadRequestException('La contraseña no puede estar vacía');
+      }
+      passwordHash = await bcrypt.hash(pwd, 10);
     }
 
     const updated = await this.prisma.user.update({
@@ -340,10 +357,21 @@ export class UsersService {
       data: {
         name: dto.name ?? user.name,
         email: dto.email ?? user.email,
+
         cargo: dto.cargo ?? (user as any).cargo,
         sede: dto.sede ?? (user as any).sede,
-        supportArea: dto.supportArea ?? (user as any).supportArea, // 👈 área
+
+        // ✅ área libre del cliente
+        clientArea:
+          (dto as any).clientArea !== undefined
+            ? (dto as any).clientArea
+            : (user as any).clientArea,
+
+        // ⛔️ Asegura que un cliente no use supportArea
+        supportArea: null,
+
         isActive: dto.isActive ?? user.isActive,
+
         ...(passwordHash ? { passwordHash } : {}),
       },
     });
@@ -354,7 +382,7 @@ export class UsersService {
       email: updated.email,
       cargo: (updated as any).cargo ?? null,
       sede: (updated as any).sede ?? null,
-      supportArea: (updated as any).supportArea ?? null,
+      clientArea: (updated as any).clientArea ?? null,
       isActive: updated.isActive,
     };
   }

@@ -10,11 +10,11 @@ import {
 export class UpdateClientDto {
   @IsOptional()
   @IsString()
-  name: string;
+  name?: string;
 
   @IsOptional()
   @IsEmail()
-  email: string;
+  email?: string;
 
   @IsOptional()
   @IsString()
@@ -24,16 +24,19 @@ export class UpdateClientDto {
   @IsString()
   sede?: string;
 
+  // ✅ área libre del cliente
   @IsOptional()
   @IsString()
-  supportArea?: string;
+  clientArea?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(8, {
+    message: 'La contraseña debe tener al menos 8 caracteres',
+  })
+  password?: string;
 
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
-
-  @IsOptional()
-  @IsString()
-  @MinLength(8, { message: 'La contraseña debe tener al menos 8 caracteres' })
-  password: string; // 👈 añadimos password
 }

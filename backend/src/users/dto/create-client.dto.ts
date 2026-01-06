@@ -9,12 +9,12 @@ import {
 } from 'class-validator';
 
 export class CreateClientDto {
-  @IsNotEmpty()
+  @IsNotEmpty({ message: 'El nombre es obligatorio' })
   @IsString()
   name: string;
 
-  @IsNotEmpty()
-  @IsEmail()
+  @IsNotEmpty({ message: 'El correo es obligatorio' })
+  @IsEmail({}, { message: 'El correo no es válido' })
   email: string;
 
   @IsOptional()
@@ -25,12 +25,16 @@ export class CreateClientDto {
   @IsString()
   sede?: string;
 
+  // ✅ Área DEL CLIENTE (texto libre)
   @IsOptional()
   @IsString()
-  supportArea?: string;
+  clientArea?: string;
 
+  @IsNotEmpty({ message: 'La contraseña es obligatoria' })
   @IsString()
-  @MinLength(8, { message: 'La contraseña debe tener al menos 8 caracteres' })
+  @MinLength(8, {
+    message: 'La contraseña debe tener al menos 8 caracteres',
+  })
   password: string;
 
   @IsOptional()
