@@ -4,187 +4,203 @@ import {
   Controller,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   Req,
+  UploadedFile,
+  UploadedFiles,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import type { Request } from 'express';
+
+import { TicketStatus } from '@prisma/client';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { Roles } from '../auth/roles.decorator';
-import { RolesGuard } from '../auth/roles.guard';
 import { TicketsService } from './tickets.service';
-import { UpdateStatusDto } from './dto/update-status.dto';
-import { AssignTicketDto } from './dto/assign-ticket.dto';
-import { CreateMessageDto } from './dto/create-message.dto';
+import { FilesService } from '../files/files.service';
+import { multerMemoryOptions } from '../files/multer.config';
+import { TicketsGateway } from './tickets.gateway';
+
+type CurrentUser = { id: number; roles?: string[] };
 
 @Controller('tickets')
-@UseGuards(JwtAuthGuard) // todos requieren JWT
+@UseGuards(JwtAuthGuard)
 export class TicketsController {
-  constructor(private readonly ticketsService: TicketsService) {}
+  constructor(
+    private readonly ticketsService: TicketsService,
+    private readonly filesService: FilesService,
+    private readonly ticketsGateway: TicketsGateway,
+  ) {}
 
-  // ================== TICKETS BÁSICOS ==================
+  private getCurrentUser(req: Request): CurrentUser {
+    const u: any = (req as any).user;
+    return { id: Number(u?.id), roles: Array.isArray(u?.roles) ? u.roles : [] };
+  }
 
-  // Crear ticket
+  /**
+   * POST /tickets
+   * form-data:
+   *  - subject (string)
+   *  - description (string)
+   *  - area (string)
+   *  - files[] (0..10)
+   */
   @Post()
-  create(@Body() body: any, @Req() req: any) {
-    // tu servicio se llama "create"
-    return this.ticketsService.create(body, req.user.id);
+  @UseInterceptors(FilesInterceptor('files', 10, multerMemoryOptions))
+  async create(
+    @Body() body: any,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Req() req: Request,
+  ) {
+    const user = this.getCurrentUser(req);
+
+    // ✅ Sin adjuntos
+    if (!files || files.length === 0) {
+      const created = await this.ticketsService.create(body, user.id);
+
+      if (!created) {
+        // si tu service devuelve null, algo falló o no creó el ticket
+        throw new Error('No se pudo crear el ticket');
+      }
+
+      this.ticketsGateway.emitNewTicket(created);
+      return created;
+    }
+
+    // ✅ Con adjuntos => guardar archivos primero
+    const saved = await Promise.all(
+      files.map((f) => this.filesService.saveFile(f, 'tickets')),
+    );
+
+    const created = await this.ticketsService.createWithAttachments(
+      body,
+      user.id,
+      saved,
+    );
+    if (created) {
+      this.ticketsGateway.emitNewTicket(created);
+    }
+
+    if (!created) {
+      throw new Error('No se pudo crear el ticket con adjuntos');
+    }
+
+    // 🔔 Notificar a agentes/admin (por área si existe)
+    this.ticketsGateway.emitNewTicket(created);
+
+    return created;
   }
 
-  // Ver mis tickets
+  /**
+   * GET /tickets/my
+   */
   @Get('my')
-  findMy(@Req() req: any) {
-    // tu servicio se llama "findMy"
-    return this.ticketsService.findMy(req.user.id);
+  async findMy(@Req() req: Request) {
+    const user = this.getCurrentUser(req);
+    return this.ticketsService.findMy(user.id);
   }
 
-  // Ver todos los tickets (admin o soporte)
-  @Get('list')
-  @UseGuards(RolesGuard)
-  @Roles('support', 'admin', 'super-admin')
-  findAll() {
-    return this.ticketsService.findAll();
-  }
-
-  // Lista simplificada para el panel (ya existe en tu servicio)
+  /**
+   * GET /tickets/panel-list
+   */
   @Get('panel-list')
-  @UseGuards(RolesGuard)
-  @Roles('support', 'admin', 'super-admin') // 👈 AGREGAR super-admin
-  async panelList(@Req() req: any) {
-    return this.ticketsService.getTicketsForPanel({
-      id: req.user.id,
-      roles: req.user.roles || [],
-    });
+  async panelList(@Req() req: Request) {
+    const user = this.getCurrentUser(req);
+    return this.ticketsService.getTicketsForPanel(user);
   }
 
-  // Ver un ticket concreto
+  /**
+   * GET /tickets/:id
+   */
   @Get(':id')
-  async findOne(@Req() req: any, @Param('id') id: string) {
-    const ticketId = Number(id);
-    const ticket = await this.ticketsService.findOne(ticketId);
-
-    if (!ticket) {
-      return { message: 'Ticket no existe' };
-    }
-
-    const isAdminOrSupport =
-      req.user.roles?.includes('admin') || req.user.roles?.includes('support');
-    const isOwner = ticket.createdById === req.user.id;
-    const isAssigned = ticket.assignedToId === req.user.id;
-
-    if (!isAdminOrSupport && !isOwner && !isAssigned) {
-      return { message: 'No autorizado' };
-    }
-
-    return ticket;
+  async findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.ticketsService.findOne(id);
   }
 
-  // ================== CAMBIAR ESTADO ==================
-
-  @Patch(':id/status')
-  @UseGuards(RolesGuard)
-  @Roles('support', 'admin', 'super-admin')
-  async updateStatus(
-    @Param('id') id: string,
-    @Body() dto: UpdateStatusDto,
-    @Req() req: any,
+  /**
+   * GET /tickets/:id/messages
+   */
+  @Get(':id/messages')
+  async getMessages(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
   ) {
-    const ticketId = Number(id);
-    // tu servicio se llama "updateStatus"
-    return this.ticketsService.updateStatus(
-      ticketId,
-      dto.status,
-      req.user.id,
-      dto.note,
-    );
+    // si luego quieres validar permisos por usuario, aquí tienes el user:
+    // const user = this.getCurrentUser(req);
+    return this.ticketsService.getMessages(id);
   }
 
-  // ================== ASIGNAR TICKET ==================
-
-  @Patch(':id/assign')
-  @UseGuards(RolesGuard)
-  @Roles('support', 'admin', 'super-admin')
-  async assign(
-    @Param('id') id: string,
-    @Body() dto: AssignTicketDto,
-    @Req() req: any,
-  ) {
-    const ticketId = Number(id);
-    // tu servicio se llama "assignTicket"
-    return this.ticketsService.assignTicket(
-      ticketId,
-      dto.assignedToId,
-      req.user.id,
-      dto.note,
-    );
-  }
-
-  // ================== HISTORIAL ==================
-
-  @Get(':id/history')
-  @UseGuards(RolesGuard)
-  @Roles('support', 'admin', 'auditor', 'super-admin')
-  getHistory(@Param('id') id: string) {
-    const ticketId = Number(id);
-    // tu servicio se llama "getHistory"
-    return this.ticketsService.getHistory(ticketId);
-  }
-
-  // ================== CHAT INTERNO ==================
-
-  // Enviar mensaje al chat del ticket
+  /**
+   * POST /tickets/:id/messages
+   * form-data:
+   *  - content (string, opcional si envías file)
+   *  - file (1 archivo opcional)
+   */
   @Post(':id/messages')
+  @UseInterceptors(FileInterceptor('file', multerMemoryOptions))
   async addMessage(
-    @Param('id') id: string,
-    @Body() dto: CreateMessageDto,
-    @Req() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { content?: string },
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req: Request,
   ) {
-    const ticketId = Number(id);
-    const ticket = await this.ticketsService.findOne(ticketId);
+    const user = this.getCurrentUser(req);
 
-    if (!ticket) {
-      return { message: 'Ticket no existe' };
-    }
+    const saved = file
+      ? await this.filesService.saveFile(file, 'messages')
+      : undefined;
 
-    const isAdminOrSupport =
-      req.user.roles?.includes('admin') || req.user.roles?.includes('support');
-    const isOwner = ticket.createdById === req.user.id;
-    const isAssigned = ticket.assignedToId === req.user.id;
-
-    if (!isAdminOrSupport && !isOwner && !isAssigned) {
-      return {
-        message: 'No autorizado para escribir en este ticket',
-      };
-    }
-
-    // tu servicio tiene firma: addMessage({ ticketId, content, senderId })
-    return this.ticketsService.addMessage({
-      ticketId,
-      senderId: req.user.id,
-      content: dto.content,
+    return this.ticketsService.addMessageWithAttachment({
+      ticketId: id,
+      content: body?.content ?? '',
+      senderId: user.id,
+      file: saved
+        ? {
+            originalName: saved.originalName,
+            filename: saved.filename,
+            mimeType: saved.mimeType,
+            size: saved.size,
+            path: saved.path,
+          }
+        : undefined,
     });
   }
 
-  // Listar mensajes del chat del ticket
-  @Get(':id/messages')
-  async getMessages(@Param('id') id: string, @Req() req: any) {
-    const ticketId = Number(id);
-    const ticket = await this.ticketsService.findOne(ticketId);
+  /**
+   * PATCH /tickets/:id/status
+   * body: { status: TicketStatus, note?: string }
+   */
+  @Patch(':id/status')
+  async updateStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { status: TicketStatus; note?: string },
+    @Req() req: Request,
+  ) {
+    const user = this.getCurrentUser(req);
+    return this.ticketsService.updateStatus(id, body.status, user, body.note);
+  }
 
-    if (!ticket) {
-      return { message: 'Ticket no existe' };
-    }
+  /**
+   * PATCH /tickets/:id/assign-me
+   */
+  @Patch(':id/assign-me')
+  async assignMe(@Param('id', ParseIntPipe) id: number, @Req() req: Request) {
+    const user = this.getCurrentUser(req);
+    return this.ticketsService.assignMe(id, user);
+  }
 
-    const isAdminOrSupport =
-      req.user.roles?.includes('admin') || req.user.roles?.includes('support');
-    const isOwner = ticket.createdById === req.user.id;
-    const isAssigned = ticket.assignedToId === req.user.id;
-
-    if (!isAdminOrSupport && !isOwner && !isAssigned) {
-      return { message: 'No autorizado para ver este chat' };
-    }
-
-    // tu servicio se llama "getMessages"
-    return this.ticketsService.getMessages(ticketId);
+  /**
+   * PATCH /tickets/:id/open
+   */
+  @Patch(':id/open')
+  async openForAgent(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
+  ) {
+    const user = this.getCurrentUser(req);
+    return this.ticketsService.openForAgent(id, user);
   }
 }

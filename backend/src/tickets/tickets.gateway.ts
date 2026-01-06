@@ -12,10 +12,17 @@ import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { TicketsService } from './tickets.service';
 
-// 👇 extendemos el tipo de Socket para que tenga data.userId
+type JwtPayload = {
+  sub?: number;
+  id?: number;
+  roles?: string[] | string;
+};
+
 interface WsClient extends Socket {
   data: {
     userId: number;
+    roles: string[];
+    isClient: boolean;
   };
 }
 
@@ -32,27 +39,97 @@ export class TicketsGateway
     private readonly jwtService: JwtService,
   ) {}
 
-  // 🔥 AL CONECTAR
+  /* ===========================
+     Helpers roles
+  ============================ */
+  private normalizeRoles(raw: any): string[] {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw.map((r) => String(r));
+    if (typeof raw === 'string') return [raw];
+    return [];
+  }
+
+  private isClientRole(roles: string[]) {
+    // Ajusta según tu proyecto
+    return roles.includes('client') || roles.includes('cliente');
+  }
+
+  private isAgentRole(roles: string[]) {
+    // Ajusta según tu proyecto
+    return (
+      roles.includes('agent') ||
+      roles.includes('agente') ||
+      roles.includes('admin') ||
+      roles.includes('super-admin')
+    );
+  }
+
+  /* ===========================
+     🔥 CONNECT
+  ============================ */
   async handleConnection(client: WsClient) {
     try {
-      const token = client.handshake.auth.token;
-      const ticketId = Number(client.handshake.auth.ticketId);
+      const token = client.handshake.auth?.token as string | undefined;
+      const ticketIdRaw = client.handshake.auth?.ticketId;
+      const ticketId = Number(ticketIdRaw);
 
-      if (!token || !ticketId) throw new Error('Missing token or ticketId');
+      // áreas opcionales enviadas por el FRONT del panel (recomendado)
+      const areasFromClient = client.handshake.auth?.areas as
+        | string[]
+        | undefined;
 
-      const payload = await this.jwtService.verifyAsync(token);
+      if (!token) throw new Error('Missing token');
 
-      client.data.userId = payload.sub ?? payload.id;
+      const payload = (await this.jwtService.verifyAsync(token)) as JwtPayload;
 
-      const room = `ticket_${ticketId}`;
-      client.join(room);
+      const userId = Number(payload.sub ?? payload.id);
+      if (!userId) throw new Error('Invalid user id in token');
 
-      // 📤 ENVIAR HISTORIAL AL CONECTAR
-      const history = await this.ticketsService.getMessages(ticketId);
-      client.emit('ticket_history', history);
+      const roles = this.normalizeRoles(payload.roles);
+      const isClient = this.isClientRole(roles);
+      const isAgent = this.isAgentRole(roles);
+
+      client.data.userId = userId;
+      client.data.roles = roles;
+      client.data.isClient = isClient;
+
+      // ✅ 1) Si viene ticketId válido => entrar al room del ticket
+      if (ticketId && !Number.isNaN(ticketId)) {
+        const room = `ticket_${ticketId}`;
+        client.join(room);
+
+        // 📤 ENVIAR HISTORIAL AL CONECTAR
+        const history = await this.ticketsService.getMessages(ticketId);
+        client.emit('ticket_history', history);
+
+        console.log(`🟢 User ${userId} conectado a ${room}`);
+        return;
+      }
+
+      // ✅ 2) Si NO viene ticketId => SOLO agentes pueden quedarse conectados
+      if (isClient) {
+        throw new Error('Client cannot connect without ticketId');
+      }
+      if (!isAgent) {
+        throw new Error('User is not agent/admin');
+      }
+
+      // Room general de agentes
+      client.join('agents');
+
+      // Rooms por área (si el panel los manda)
+      if (Array.isArray(areasFromClient) && areasFromClient.length > 0) {
+        for (const a of areasFromClient) {
+          const area = String(a || '').trim();
+          if (!area) continue;
+          client.join(`area:${area}`);
+        }
+      }
 
       console.log(
-        `🟢 Usuario ${client.data.userId} conectado al ticket ${ticketId}`,
+        `🟢 Agente/Admin ${userId} conectado a "agents"${
+          areasFromClient?.length ? ` + areas ${areasFromClient.join(',')}` : ''
+        }`,
       );
     } catch (error: any) {
       console.log('❌ Conexión rechazada:', error.message);
@@ -64,13 +141,17 @@ export class TicketsGateway
     console.log('🔴 Cliente desconectado', client.id);
   }
 
-  // 📩 CUANDO CLIENTE ENVÍA MENSAJE
+  /* ===========================
+     📩 Mensaje WS: send_message
+  ============================ */
   @SubscribeMessage('send_message')
   async handleSendMessage(
     @ConnectedSocket() client: WsClient,
     @MessageBody() data: { ticketId: number; content: string },
   ) {
-    const ticketId = data.ticketId;
+    const ticketId = Number(data?.ticketId);
+    if (!ticketId) return;
+
     const room = `ticket_${ticketId}`;
 
     // Guardar en BD
@@ -80,9 +161,43 @@ export class TicketsGateway
       senderId: client.data.userId,
     });
 
-    // 📤 Emitir a TODOS los conectados al ticket
+    // Emitir a TODOS los conectados al ticket
     this.server.to(room).emit('ticket_message', msg);
 
     return msg;
+  }
+
+  /* ===========================
+     🔔 NEW TICKET (lo que faltaba)
+     Emitimos SOLO a area:XXX si existe
+     Si NO hay área => emitimos a "agents"
+     (Así evitas doble evento/sonido)
+  ============================ */
+  emitNewTicket(ticket: {
+    id: number;
+    subject?: string | null;
+    area?: string | null;
+    createdAt?: any;
+  }) {
+    this.server.to('agents').emit('new_ticket', ticket);
+
+    const area = (ticket.area || '').trim();
+    if (area) {
+      this.server.to(`area:${area}`).emit('new_ticket', ticket);
+    }
+
+    const payload = {
+      id: ticket.id,
+      subject: ticket.subject ?? null,
+      area: ticket.area ?? null,
+      createdAt: ticket.createdAt ?? null,
+    };
+
+    if (payload.area) {
+      this.server.to(`area:${payload.area}`).emit('new_ticket', payload);
+      return;
+    }
+
+    this.server.to('agents').emit('new_ticket', payload);
   }
 }
