@@ -6,3 +6,6 @@ build
 .vscode
 .DS_Store
 uploads
+# Vite cache
+frontend/.vite
+**/.vite
