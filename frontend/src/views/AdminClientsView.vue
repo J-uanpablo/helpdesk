@@ -1,8 +1,9 @@
 <!-- src/views/AdminClientsView.vue -->
 <script setup lang="ts">
-import { reactive, ref, computed, onMounted } from "vue";
-import { useRouter } from "vue-router";
-import { useAuth } from "../composables/useAuth";
+import { reactive, ref, computed, onMounted, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import { useAuth } from '../composables/useAuth';
+import { apiFetch } from '../lib/api';
 
 interface AdminClient {
   id: number;
@@ -10,183 +11,234 @@ interface AdminClient {
   email: string;
   cargo?: string | null;
   sede?: string | null;
-  supportArea?: string | null; // texto libre
+  clientArea?: string | null;
   isActive: boolean;
   createdAt: string;
 }
 
 const router = useRouter();
-const { token, user, initAuth, logout } = useAuth();
+const { token, initAuth } = useAuth();
 
 const clients = ref<AdminClient[]>([]);
 const isLoading = ref(false);
 const error = ref<string | null>(null);
 
-// filtros
-const searchText = ref("");
-const sedeFilter = ref("all");
-const areaFilter = ref("all");
+// =============================
+// ESTADO DEL MENÚ DESPLEGABLE DE ACCIONES
+// =============================
+const openMenuId = ref<number | null>(null);
 
-// modales
+function toggleMenu(id: number) {
+  openMenuId.value = openMenuId.value === id ? null : id;
+}
+
+function closeMenu() {
+  openMenuId.value = null;
+}
+
+// =============================
+// FILTROS
+// =============================
+const searchText = ref('');
+const sedeFilter = ref('all');
+const areaFilter = ref('all');
+const onlyActive = ref(false);
+
+// =============================
+// PAGINACIÓN
+// =============================
+const page = ref(1);
+const pageSize = 8;
+
+// =============================
+// MODALES
+// =============================
 const showNewModal = ref(false);
 const showEditModal = ref(false);
+const showDeleteModal = ref(false);
 
-// toggles ver/ocultar contraseña
+// =============================
+// TOGGLES PASSWORD
+// =============================
 const showNewClientPassword = ref(false);
 const showEditClientPassword = ref(false);
 
-// formularios
+// =============================
+// FORMULARIOS
+// =============================
 const newClientForm = reactive({
-  name: "",
-  email: "",
-  cargo: "",
-  sede: "",
-  supportArea: "", // texto que escribes a mano
-  password: "",
+  name: '',
+  email: '',
+  cargo: '',
+  sede: '',
+  clientArea: '',
+  password: '',
   isActive: true,
 });
 
 const editClientForm = reactive({
   id: 0,
-  name: "",
-  email: "",
-  cargo: "",
-  sede: "",
-  supportArea: "",
-  password: "",
+  name: '',
+  email: '',
+  cargo: '',
+  sede: '',
+  clientArea: '',
+  password: '',
   isActive: true,
 });
 
-// helpers
+// =============================
+// DELETE TARGET
+// =============================
+const deleteClientTarget = reactive({
+  id: 0,
+  name: '',
+  email: '',
+});
+
+// =============================
+// COMPUTED
+// =============================
 const filteredClients = computed(() => {
   const text = searchText.value.trim().toLowerCase();
-  const sede = sedeFilter.value;
-  const area = areaFilter.value;
 
-  return clients.value.filter((c) => {
+  return clients.value.filter(c => {
     const matchesText =
-      !text ||
-      c.name.toLowerCase().includes(text) ||
-      c.email.toLowerCase().includes(text);
+      !text || c.name.toLowerCase().includes(text) || c.email.toLowerCase().includes(text);
 
-    const sedeValue = (c.sede || "").trim().toLowerCase();
-    const areaValue = (c.supportArea || "").trim().toLowerCase();
+    const matchesSede =
+      sedeFilter.value === 'all' || (c.sede || '').toLowerCase() === sedeFilter.value.toLowerCase();
 
-    const matchesSede = sede === "all" || sedeValue === sede.toLowerCase();
-    const matchesArea = area === "all" || areaValue === area.toLowerCase();
+    const matchesArea =
+      areaFilter.value === 'all' ||
+      (c.clientArea || '').toLowerCase() === areaFilter.value.toLowerCase();
 
-    return matchesText && matchesSede && matchesArea;
+    const matchesActive = !onlyActive.value || c.isActive;
+
+    return matchesText && matchesSede && matchesArea && matchesActive;
   });
 });
 
 const totalClients = computed(() => clients.value.length);
 
+const totalPages = computed(() => {
+  return Math.max(1, Math.ceil(filteredClients.value.length / pageSize));
+});
+
+const paginatedClients = computed(() => {
+  const start = (page.value - 1) * pageSize;
+  const end = start + pageSize;
+  return filteredClients.value.slice(start, end);
+});
+
+function goToPage(newPage: number) {
+  if (newPage < 1 || newPage > totalPages.value) return;
+  page.value = newPage;
+}
+
+watch([searchText, sedeFilter, areaFilter, onlyActive], () => {
+  page.value = 1;
+});
+
 function formatDate(dateStr: string) {
-  const d = new Date(dateStr);
-  return d.toLocaleString("es-CO");
+  return new Date(dateStr).toLocaleString('es-CO', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
 }
 
 // =============================
-// Cargar clientes
+// LOAD DATA
 // =============================
 async function loadClients() {
-  error.value = null;
   if (!token.value) return;
-
+  error.value = null;
   isLoading.value = true;
+
   try {
-    const res = await fetch("http://localhost:3000/users/clients", {
-      headers: {
-        Authorization: `Bearer ${token.value}`,
-      },
-    });
+    const res = await apiFetch('http://localhost:3000/users/clients');
 
-    if (!res.ok) {
-      throw new Error(`Error ${res.status} al cargar los clientes`);
-    }
+    if (!res.ok) throw new Error('Error cargando clientes');
 
-    const data = (await res.json()) as AdminClient[];
-    clients.value = data;
-  } catch (e: any) {
-    console.error(e);
-    error.value = e.message || "Error al cargar los clientes";
+    clients.value = await res.json();
+  } catch (err: any) {
+    error.value = err.message || 'Error al cargar datos';
   } finally {
     isLoading.value = false;
   }
 }
 
 // =============================
-// Crear cliente
+// CREATE
 // =============================
 async function createClient() {
   if (!token.value) return;
   error.value = null;
 
   try {
-    const payload: any = {
-      name: newClientForm.name.trim(),
-      email: newClientForm.email.trim(),
-      cargo: newClientForm.cargo.trim() || undefined,
-      sede: newClientForm.sede.trim() || undefined,
-      supportArea: newClientForm.supportArea.trim() || undefined,
-      password: newClientForm.password,
-      isActive: newClientForm.isActive,
-    };
-
-    const res = await fetch("http://localhost:3000/users/clients", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token.value}`,
-      },
-      body: JSON.stringify(payload),
+    const res = await apiFetch('http://localhost:3000/users/clients', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: newClientForm.name.trim(),
+        email: newClientForm.email.trim(),
+        cargo: newClientForm.cargo.trim() || undefined,
+        sede: newClientForm.sede.trim() || undefined,
+        clientArea: newClientForm.clientArea.trim() || undefined,
+        password: newClientForm.password,
+        isActive: newClientForm.isActive,
+      }),
     });
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(
-        data.message || `Error ${res.status} al crear el cliente`
-      );
+      throw new Error(data.message || 'Error creando cliente');
     }
 
-    const created = (await res.json()) as AdminClient;
+    const created = await res.json();
     clients.value.push(created);
-    showNewModal.value = false;
 
-    // limpiar formulario
-    newClientForm.name = "";
-    newClientForm.email = "";
-    newClientForm.cargo = "";
-    newClientForm.sede = "";
-    newClientForm.supportArea = "";
-    newClientForm.password = "";
-    newClientForm.isActive = true;
+    Object.assign(newClientForm, {
+      name: '',
+      email: '',
+      cargo: '',
+      sede: '',
+      clientArea: '',
+      password: '',
+      isActive: true,
+    });
+
     showNewClientPassword.value = false;
-  } catch (e: any) {
-    console.error(e);
-    error.value = e.message || "Error al crear el cliente";
+    showNewModal.value = false;
+  } catch (err: any) {
+    error.value = err.message || 'Error creando cliente';
   }
 }
 
 // =============================
-// Abrir modal de edición
+// EDIT
 // =============================
 function openEditClient(c: AdminClient) {
-  editClientForm.id = c.id;
-  editClientForm.name = c.name;
-  editClientForm.email = c.email;
-  editClientForm.cargo = c.cargo || "";
-  editClientForm.sede = c.sede || "";
-  editClientForm.supportArea = c.supportArea || "";
-  editClientForm.password = "";
-  editClientForm.isActive = c.isActive;
+  closeMenu();
+
+  Object.assign(editClientForm, {
+    id: c.id,
+    name: c.name,
+    email: c.email,
+    cargo: c.cargo || '',
+    sede: c.sede || '',
+    clientArea: c.clientArea || '',
+    password: '',
+    isActive: c.isActive,
+  });
+
   showEditClientPassword.value = false;
   showEditModal.value = true;
 }
 
-// =============================
-// Guardar cambios cliente
-// =============================
 async function updateClient() {
   if (!token.value) return;
   error.value = null;
@@ -197,7 +249,7 @@ async function updateClient() {
       email: editClientForm.email.trim(),
       cargo: editClientForm.cargo.trim() || undefined,
       sede: editClientForm.sede.trim() || undefined,
-      supportArea: editClientForm.supportArea.trim() || undefined,
+      clientArea: editClientForm.clientArea.trim() || undefined,
       isActive: editClientForm.isActive,
     };
 
@@ -205,429 +257,678 @@ async function updateClient() {
       payload.password = editClientForm.password;
     }
 
-    const res = await fetch(
-      `http://localhost:3000/users/clients/${editClientForm.id}`,
-      {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token.value}`,
-        },
-        body: JSON.stringify(payload),
-      }
-    );
+    const res = await apiFetch(`http://localhost:3000/users/clients/${editClientForm.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(
-        data.message || `Error ${res.status} al actualizar el cliente`
-      );
+      throw new Error(data.message || 'Error actualizando cliente');
     }
 
-    const updated = (await res.json()) as AdminClient;
-
-    const idx = clients.value.findIndex((c) => c.id === updated.id);
-    if (idx !== -1) {
-      clients.value[idx] = updated;
-    }
+    const updated = await res.json();
+    const idx = clients.value.findIndex(c => c.id === updated.id);
+    if (idx !== -1) clients.value[idx] = updated;
 
     showEditModal.value = false;
-  } catch (e: any) {
-    console.error(e);
-    error.value = e.message || "Error al actualizar el cliente";
+  } catch (err: any) {
+    error.value = err.message || 'Error actualizando cliente';
   }
 }
 
 // =============================
-// Activar / desactivar cliente
+// TOGGLE ACTIVE
 // =============================
 async function toggleClientActive(c: AdminClient) {
+  closeMenu();
   if (!token.value) return;
   error.value = null;
 
   try {
-    const res = await fetch(`http://localhost:3000/users/clients/${c.id}`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token.value}`,
-      },
+    const res = await apiFetch(`http://localhost:3000/users/clients/${c.id}`, {
+      method: 'PATCH',
       body: JSON.stringify({ isActive: !c.isActive }),
     });
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(
-        data.message || `Error ${res.status} al actualizar el estado`
-      );
+      throw new Error(data.message || 'Error cambiando estado');
     }
 
-    const updated = (await res.json()) as AdminClient;
-    const idx = clients.value.findIndex((x) => x.id === updated.id);
-    if (idx !== -1) {
-      clients.value[idx] = updated;
-    }
-  } catch (e: any) {
-    console.error(e);
-    error.value = e.message || "Error al cambiar estado del cliente";
+    const updated = await res.json();
+    const idx = clients.value.findIndex(x => x.id === updated.id);
+    if (idx !== -1) clients.value[idx] = updated;
+  } catch (err: any) {
+    error.value = err.message || 'Error cambiando estado';
   }
 }
 
-function goBackToPanel() {
-  router.push({ name: "soporte" });
+// =============================
+// DELETE
+// =============================
+function openDeleteClient(c: AdminClient) {
+  closeMenu();
+  Object.assign(deleteClientTarget, {
+    id: c.id,
+    name: c.name,
+    email: c.email,
+  });
+  showDeleteModal.value = true;
 }
 
-async function confirmLogout() {
-  await logout();
-  router.push({ name: "login" });
+async function confirmDeleteClient() {
+  if (!token.value) return;
+  error.value = null;
+
+  try {
+    const res = await apiFetch(`http://localhost:3000/users/clients/${deleteClientTarget.id}`, {
+      method: 'DELETE',
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.message || 'Error eliminando cliente');
+    }
+
+    clients.value = clients.value.filter(c => c.id !== deleteClientTarget.id);
+    showDeleteModal.value = false;
+  } catch (err: any) {
+    error.value = err.message || 'Error eliminando cliente';
+  }
 }
 
+// =============================
+// INIT
+// =============================
 onMounted(async () => {
   initAuth();
+
   if (!token.value) {
-    router.push({ name: "login" });
+    router.push({ name: 'login' });
     return;
   }
+
   await loadClients();
 });
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-950 text-slate-100">
-    <!-- HEADER -->
-    <header class="px-6 pt-4 pb-3 border-b border-slate-800">
+  <div class="min-h-screen" :style="{ background: 'var(--bg-main)', color: 'var(--text-main)' }">
+    <main class="px-6 py-6 max-w-[1600px] mx-auto">
       <div
-        class="max-w-6xl mx-auto flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
+        class="w-full rounded-2xl border shadow-[0_0_0_1px_rgba(15,23,42,0.06)] backdrop-blur"
+        :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
       >
-        <div>
-          <p class="text-xs text-slate-400 mb-1">
-            Administración de usuarios finales
-          </p>
-          <h1 class="text-2xl md:text-3xl font-bold">
-            Administración de clientes
-          </h1>
-          <p class="text-xs text-slate-400">
-            Crea y gestiona los usuarios finales que usan la mesa de ayuda.
-          </p>
-        </div>
+        <div class="flex flex-col gap-4 p-6 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p class="text-xs" :style="{ color: 'var(--text-soft)' }">
+              Administración de usuarios finales
+            </p>
+            <h1 class="mt-1 text-2xl font-bold tracking-tight">Administración de clientes</h1>
+            <p class="mt-1 text-xs" :style="{ color: 'var(--text-soft)' }">
+              Crea y gestiona los clientes que usan la mesa de ayuda.
+            </p>
+          </div>
 
-        <div class="flex flex-col items-end gap-1 text-right">
-          <p class="text-[11px] text-slate-300">
-            Sesión:
-            <span class="font-semibold">
-              {{ user?.name || "Usuario autenticado" }}
-            </span>
-          </p>
-          <p v-if="user?.email" class="text-[10px] text-slate-500">
-            {{ user.email }}
-          </p>
-
-          <div class="flex gap-2 mt-1">
-            <button
-              type="button"
-              @click="goBackToPanel"
-              class="h-8 px-3 rounded-md bg-slate-700 hover:bg-slate-600 text-xs font-semibold"
+          <div class="flex items-center gap-2">
+            <div
+              class="hidden md:flex items-center gap-2 rounded-xl border px-3 py-2"
+              :style="{ background: 'var(--bg-soft)', borderColor: 'var(--border-main)' }"
             >
-              ← Volver al panel
-            </button>
+              <div class="text-[11px]" :style="{ color: 'var(--text-soft)' }">Clientes</div>
+              <div class="text-sm font-semibold">{{ totalClients }}</div>
+            </div>
 
             <button
               type="button"
               @click="showNewModal = true"
-              class="h-8 px-3 rounded-md bg-emerald-500 hover:bg-emerald-600 text-xs font-semibold"
+              class="inline-flex h-9 items-center gap-2 rounded-lg px-4 text-xs font-semibold text-white shadow-sm transition hover:opacity-95 active:scale-[0.99]"
+              style="background: #10b981"
             >
+              <span class="text-base leading-none">＋</span>
               Nuevo cliente
             </button>
-
-            <button
-              @click="confirmLogout"
-              class="h-8 px-3 rounded-md bg-red-500 hover:bg-red-600 text-xs font-semibold"
-            >
-              Cerrar sesión
-            </button>
-          </div>
-        </div>
-      </div>
-    </header>
-
-    <!-- CONTENIDO -->
-    <main class="px-6 py-4">
-      <div class="max-w-6xl mx-auto space-y-3">
-        <!-- filtros -->
-        <div
-          class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3"
-        >
-          <!-- Buscar -->
-          <div class="flex-1 flex flex-col md:flex-row md:items-center gap-2">
-            <label class="text-xs text-slate-400">Buscar:</label>
-            <input
-              v-model="searchText"
-              type="text"
-              class="flex-1 rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              placeholder="Nombre o correo..."
-            />
-          </div>
-
-          <!-- Filtro Área + Sede -->
-          <div class="flex flex-wrap items-center gap-3">
-            <div class="flex items-center gap-2">
-              <label class="text-xs text-slate-400">Área:</label>
-              <select
-                v-model="areaFilter"
-                class="rounded-md bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                <option value="all">Todas las áreas</option>
-                <option
-                  v-for="a in Array.from(
-                    new Set(
-                      clients
-                        .map((c) => (c.supportArea || '').trim())
-                        .filter((x) => x)
-                    )
-                  )"
-                  :key="a"
-                  :value="a"
-                >
-                  {{ a }}
-                </option>
-              </select>
-            </div>
-
-            <div class="flex items-center gap-2">
-              <label class="text-xs text-slate-400">Sede:</label>
-              <select
-                v-model="sedeFilter"
-                class="rounded-md bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                <option value="all">Todas las sedes</option>
-                <option
-                  v-for="s in Array.from(
-                    new Set(
-                      clients.map((c) => (c.sede || '').trim()).filter((x) => x)
-                    )
-                  )"
-                  :key="s"
-                  :value="s"
-                >
-                  {{ s }}
-                </option>
-              </select>
-            </div>
           </div>
         </div>
 
-        <p class="text-[11px] text-slate-500">
-          Mostrando {{ filteredClients.length }} de {{ totalClients }} clientes.
-        </p>
+        <div class="border-t px-6 py-4" :style="{ borderColor: 'var(--border-main)' }">
+          <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div class="flex flex-1 items-center gap-2">
+              <span class="text-xs" :style="{ color: 'var(--text-soft)' }">Buscar</span>
+              <div class="relative flex-1 max-w-sm">
+                <input
+                  v-model="searchText"
+                  type="text"
+                  class="w-full rounded-xl border px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                  :style="{
+                    background: 'var(--input-bg)',
+                    borderColor: 'var(--border-main)',
+                    color: 'var(--text-main)',
+                  }"
+                  placeholder="Nombres o correo..."
+                />
+                <div
+                  class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[10px]"
+                  :style="{ color: 'var(--text-muted)' }"
+                >
+                  ⌘K
+                </div>
+              </div>
+            </div>
 
-        <p v-if="error" class="text-[11px] text-rose-400">
-          {{ error }}
-        </p>
-
-        <!-- tabla -->
-        <div class="Overflow-x-auto rounded-xl border border-slate-800">
-          <table class="min-w-full text-xs">
-            <thead class="bg-slate-900/70 text-slate-400">
-              <tr>
-                <th class="px-4 py-2 text-left font-semibold">Nombre</th>
-                <th class="px-4 py-2 text-left font-semibold">Correo</th>
-                <th class="px-4 py-2 text-left font-semibold">Cargo</th>
-                <th class="px-4 py-2 text-left font-semibold">Área</th>
-                <th class="px-4 py-2 text-left font-semibold">Sede</th>
-                <th class="px-4 py-2 text-left font-semibold">Estado</th>
-                <th class="px-4 py-2 text-left font-semibold">Creado</th>
-                <th class="px-4 py-2 text-left font-semibold">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-if="isLoading"
-                class="border-t border-slate-800 bg-slate-950/60"
+            <div class="flex flex-wrap items-center gap-3">
+              <div
+                class="flex items-center gap-2 rounded-xl border px-3 py-2"
+                :style="{ background: 'var(--bg-soft)', borderColor: 'var(--border-main)' }"
               >
-                <td colspan="8" class="px-4 py-6 text-center text-slate-500">
-                  Cargando clientes...
-                </td>
-              </tr>
-
-              <tr
-                v-else-if="!filteredClients.length"
-                class="border-t border-slate-800 bg-slate-950/60"
-              >
-                <td colspan="8" class="px-4 py-6 text-center text-slate-500">
-                  No hay clientes que coincidan con los filtros seleccionados.
-                </td>
-              </tr>
-
-              <tr
-                v-for="c in filteredClients"
-                :key="c.id"
-                class="border-t border-slate-800 hover:bg-slate-900/60"
-              >
-                <td class="px-4 py-2">
-                  <div class="flex flex-col">
-                    <span class="font-semibold text-slate-100">
-                      {{ c.name }}
-                    </span>
-                    <span class="text-[10px] text-slate-500">
-                      ID: {{ c.id }}
-                    </span>
-                  </div>
-                </td>
-
-                <td class="px-4 py-2 text-slate-200">
-                  {{ c.email }}
-                </td>
-
-                <td class="px-4 py-2 text-slate-200">
-                  {{ c.cargo || "—" }}
-                </td>
-
-                <td class="px-4 py-2 text-slate-200">
-                  {{ c.supportArea || "—" }}
-                </td>
-
-                <td class="px-4 py-2 text-slate-200">
-                  {{ c.sede || "—" }}
-                </td>
-
-                <td class="px-4 py-2">
-                  <span
-                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px]"
-                    :class="
-                      c.isActive
-                        ? 'bg-emerald-500/10 text-emerald-300'
-                        : 'bg-slate-700/60 text-slate-300'
-                    "
+                <span class="text-xs" :style="{ color: 'var(--text-soft)' }">Área</span>
+                <select
+                  v-model="areaFilter"
+                  class="rounded-lg border px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                  :style="{
+                    background: 'var(--input-bg)',
+                    borderColor: 'var(--border-main)',
+                    color: 'var(--text-main)',
+                  }"
+                >
+                  <option value="all">Todas</option>
+                  <option
+                    v-for="a in Array.from(
+                      new Set(clients.map(c => (c.clientArea || '').trim()).filter(x => x))
+                    )"
+                    :key="a"
+                    :value="a"
                   >
-                    <span
-                      class="w-1.5 h-1.5 rounded-full"
-                      :class="c.isActive ? 'bg-emerald-400' : 'bg-slate-400'"
-                    ></span>
-                    {{ c.isActive ? "Activo" : "Inactivo" }}
-                  </span>
-                </td>
+                    {{ a }}
+                  </option>
+                </select>
+              </div>
 
-                <td class="px-4 py-2 text-slate-400">
-                  {{ formatDate(c.createdAt) }}
-                </td>
+              <div
+                class="flex items-center gap-2 rounded-xl border px-3 py-2"
+                :style="{ background: 'var(--bg-soft)', borderColor: 'var(--border-main)' }"
+              >
+                <span class="text-xs" :style="{ color: 'var(--text-soft)' }">Sede</span>
+                <select
+                  v-model="sedeFilter"
+                  class="rounded-lg border px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                  :style="{
+                    background: 'var(--input-bg)',
+                    borderColor: 'var(--border-main)',
+                    color: 'var(--text-main)',
+                  }"
+                >
+                  <option value="all">Todas</option>
+                  <option
+                    v-for="s in Array.from(
+                      new Set(clients.map(c => (c.sede || '').trim()).filter(x => x))
+                    )"
+                    :key="s"
+                    :value="s"
+                  >
+                    {{ s }}
+                  </option>
+                </select>
+              </div>
 
-                <td class="px-4 py-2">
-                  <div class="flex gap-2">
-                    <button
-                      class="px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-[10px] font-semibold"
-                      @click="openEditClient(c)"
+              <label class="flex items-center gap-2 cursor-pointer ml-2">
+                <div
+                  class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200"
+                  :style="{ background: onlyActive ? '#4f46e5' : 'var(--border-main)' }"
+                >
+                  <span
+                    class="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform duration-200 shadow-sm"
+                    :class="onlyActive ? 'translate-x-4' : 'translate-x-1'"
+                  />
+                </div>
+                <input v-model="onlyActive" type="checkbox" class="sr-only" />
+                <span class="text-xs font-medium" :style="{ color: 'var(--text-main)' }">
+                  Solo activos
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <div class="mt-3 flex items-center justify-between">
+            <p class="text-[11px]" :style="{ color: 'var(--text-muted)' }">
+              Mostrando
+              <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
+                {{ filteredClients.length }}
+              </span>
+              de
+              <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
+                {{ totalClients }}
+              </span>
+              clientes.
+            </p>
+            <p v-if="error" class="text-[11px]" style="color: #f43f5e">{{ error }}</p>
+          </div>
+        </div>
+
+        <div class="px-6 pb-6">
+          <div
+            class="overflow-hidden rounded-2xl border"
+            :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
+          >
+            <div
+              class="flex items-center justify-between border-b px-4 py-3"
+              :style="{ borderColor: 'var(--border-main)' }"
+            >
+              <div class="text-xs font-semibold" :style="{ color: 'var(--text-main)' }">
+                Listado de clientes
+              </div>
+              <div class="text-[11px]" :style="{ color: 'var(--text-muted)' }">
+                Estado:
+                <span :style="{ color: 'var(--text-main)' }">
+                  {{ onlyActive ? 'Solo activos' : 'Todos' }}
+                </span>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto min-h-[300px]">
+              <table class="min-w-full text-xs">
+                <thead :style="{ background: 'var(--bg-soft)', color: 'var(--text-soft)' }">
+                  <tr>
+                    <th class="px-4 py-3 text-left font-semibold">Nombre</th>
+                    <th class="px-4 py-3 text-left font-semibold">Correo</th>
+                    <th class="px-4 py-3 text-left font-semibold">Cargo</th>
+                    <th class="px-4 py-3 text-left font-semibold">Área</th>
+                    <th class="px-4 py-3 text-left font-semibold">Sede</th>
+                    <th class="px-4 py-3 text-left font-semibold">Estado</th>
+                    <th class="px-4 py-3 text-left font-semibold">Creado</th>
+                    <th class="px-4 py-3 text-right font-semibold">Acciones</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  <tr v-if="isLoading" :style="{ borderTop: `1px solid var(--border-main)` }">
+                    <td
+                      colspan="8"
+                      class="px-4 py-10 text-center"
+                      :style="{ color: 'var(--text-muted)' }"
                     >
-                      Editar
-                    </button>
+                      Cargando clientes...
+                    </td>
+                  </tr>
 
-                    <button
-                      class="px-2 py-1 rounded-md text-[10px] font-semibold"
-                      :class="
-                        c.isActive
-                          ? 'bg-amber-500/80 hover:bg-amber-500 text-slate-900'
-                          : 'bg-emerald-500 hover:bg-emerald-600 text-slate-900'
-                      "
-                      @click="toggleClientActive(c)"
+                  <tr
+                    v-else-if="!filteredClients.length"
+                    :style="{ borderTop: `1px solid var(--border-main)` }"
+                  >
+                    <td
+                      colspan="8"
+                      class="px-4 py-10 text-center"
+                      :style="{ color: 'var(--text-muted)' }"
                     >
-                      {{ c.isActive ? "Desactivar" : "Activar" }}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                      No hay clientes que coincidan con los filtros.
+                    </td>
+                  </tr>
+
+                  <tr
+                    v-for="c in paginatedClients"
+                    :key="c.id"
+                    class="transition hover:bg-black/5 dark:hover:bg-white/5"
+                    :style="{ borderTop: `1px solid var(--border-main)` }"
+                  >
+                    <td class="px-4 py-3">
+                      <div class="flex flex-col">
+                        <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
+                          {{ c.name }}
+                        </span>
+                        <span class="text-[10px]" :style="{ color: 'var(--text-muted)' }">
+                          ID: {{ c.id }}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td class="px-4 py-3" :style="{ color: 'var(--text-main)' }">
+                      {{ c.email }}
+                    </td>
+
+                    <td class="px-4 py-3" :style="{ color: 'var(--text-main)' }">
+                      {{ c.cargo || '—' }}
+                    </td>
+
+                    <td class="px-4 py-3" :style="{ color: 'var(--text-main)' }">
+                      {{ c.clientArea || '—' }}
+                    </td>
+
+                    <td class="px-4 py-3" :style="{ color: 'var(--text-main)' }">
+                      {{ c.sede || '—' }}
+                    </td>
+
+                    <td class="px-4 py-3">
+                      <span
+                        class="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] border"
+                        :style="
+                          c.isActive
+                            ? {
+                                background: 'rgba(16,185,129,0.10)',
+                                color: '#10b981',
+                                borderColor: 'rgba(16,185,129,0.25)',
+                              }
+                            : {
+                                background: 'var(--bg-soft)',
+                                color: 'var(--text-soft)',
+                                borderColor: 'var(--border-main)',
+                              }
+                        "
+                      >
+                        <span
+                          class="h-1.5 w-1.5 rounded-full"
+                          :style="{ background: c.isActive ? '#10b981' : '#94a3b8' }"
+                        />
+                        {{ c.isActive ? 'Activo' : 'Inactivo' }}
+                      </span>
+                    </td>
+
+                    <td class="px-4 py-3 whitespace-nowrap" :style="{ color: 'var(--text-soft)' }">
+                      {{ formatDate(c.createdAt) }}
+                    </td>
+
+                    <td class="px-4 py-3 relative">
+                      <div class="flex items-center justify-end gap-1">
+                        <button
+                          class="h-8 w-8 flex items-center justify-center rounded-lg border transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+                          :style="{
+                            background: 'var(--bg-panel)',
+                            borderColor: 'var(--border-main)',
+                            color: 'var(--text-main)',
+                          }"
+                          @click="openEditClient(c)"
+                          title="Editar cliente"
+                        >
+                          <svg
+                            class="w-3.5 h-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                            ></path>
+                          </svg>
+                        </button>
+
+                        <button
+                          class="h-8 w-8 flex items-center justify-center rounded-lg border transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+                          :style="{
+                            background: 'var(--bg-panel)',
+                            borderColor: 'var(--border-main)',
+                            color: 'var(--text-main)',
+                          }"
+                          @click="toggleMenu(c.id)"
+                        >
+                          <svg
+                            class="w-4 h-4"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"
+                            ></path>
+                          </svg>
+                        </button>
+                      </div>
+
+                      <div
+                        v-if="openMenuId === c.id"
+                        class="absolute right-6 top-10 w-36 rounded-xl shadow-lg border py-1.5 z-20"
+                        :style="{
+                          background: 'var(--bg-panel)',
+                          borderColor: 'var(--border-main)',
+                        }"
+                      >
+                        <div class="fixed inset-0 z-[-1]" @click="closeMenu"></div>
+
+                        <button
+                          @click="toggleClientActive(c)"
+                          class="w-full text-left px-4 py-2 text-xs hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex items-center gap-2"
+                          :style="{ color: 'var(--text-main)' }"
+                        >
+                          <span
+                            class="w-2 h-2 rounded-full"
+                            :style="{ background: c.isActive ? '#f59e0b' : '#10b981' }"
+                          ></span>
+                          {{ c.isActive ? 'Desactivar' : 'Activar' }}
+                        </button>
+
+                        <div
+                          class="border-t my-1 mx-2"
+                          :style="{ borderColor: 'var(--border-main)' }"
+                        ></div>
+
+                        <button
+                          @click="openDeleteClient(c)"
+                          class="w-full text-left px-4 py-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2"
+                        >
+                          <svg
+                            class="w-3 h-3"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                            ></path>
+                          </svg>
+                          Eliminar
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <tr
+                    v-for="n in Math.max(0, 8 - paginatedClients.length)"
+                    :key="`ghost-client-${n}`"
+                    :style="{ borderTop: `1px solid var(--border-main)` }"
+                  >
+                    <td class="px-4 py-3 opacity-0">.</td>
+                    <td class="px-4 py-3 opacity-0">.</td>
+                    <td class="px-4 py-3 opacity-0">.</td>
+                    <td class="px-4 py-3 opacity-0">.</td>
+                    <td class="px-4 py-3 opacity-0">.</td>
+                    <td class="px-4 py-3 opacity-0">.</td>
+                    <td class="px-4 py-3 opacity-0">.</td>
+                    <td class="px-4 py-3 opacity-0">.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- PAGINACIÓN -->
+          <div
+            v-if="filteredClients.length > pageSize"
+            class="mt-4 flex items-center justify-between"
+          >
+            <p class="text-[11px]" :style="{ color: 'var(--text-soft)' }">
+              Mostrando
+              <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
+                {{ (page - 1) * pageSize + 1 }}
+              </span>
+              -
+              <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
+                {{ Math.min(page * pageSize, filteredClients.length) }}
+              </span>
+              de
+              <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
+                {{ filteredClients.length }}
+              </span>
+              clientes
+            </p>
+
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                class="px-3 py-1.5 rounded-lg border text-xs transition disabled:opacity-50"
+                :style="{
+                  background: 'var(--bg-soft)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
+                :disabled="page === 1"
+                @click="goToPage(page - 1)"
+              >
+                Anterior
+              </button>
+
+              <span class="text-xs font-medium px-2" :style="{ color: 'var(--text-main)' }">
+                Página {{ page }} de {{ totalPages }}
+              </span>
+
+              <button
+                type="button"
+                class="px-3 py-1.5 rounded-lg border text-xs transition disabled:opacity-50"
+                :style="{
+                  background: 'var(--bg-soft)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
+                :disabled="page === totalPages"
+                @click="goToPage(page + 1)"
+              >
+                Siguiente
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
       <!-- MODAL NUEVO CLIENTE -->
       <div
         v-if="showNewModal"
-        class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+        class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
       >
         <div
-          class="w-full max-w-md bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-xl"
+          class="w-full max-w-md rounded-2xl p-6 shadow-xl border"
+          :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
         >
           <h2 class="text-lg font-semibold mb-1">Nuevo cliente</h2>
-          <p class="text-[11px] text-slate-400 mb-4">
-            Crea un usuario final que pueda crear y consultar tickets.
+          <p class="text-[11px] mb-4" :style="{ color: 'var(--text-soft)' }">
+            Crea un usuario final que podrá crear tickets y dar seguimiento a sus solicitudes.
           </p>
 
           <div class="space-y-3 text-xs">
             <div class="space-y-1">
-              <label class="block text-slate-300">Nombre completo</label>
+              <label class="block" :style="{ color: 'var(--text-main)' }">Nombre completo</label>
               <input
                 v-model="newClientForm.name"
                 type="text"
-                class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                class="w-full rounded-md border px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                :style="{
+                  background: 'var(--input-bg)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
               />
             </div>
 
             <div class="space-y-1">
-              <label class="block text-slate-300">Correo</label>
+              <label class="block" :style="{ color: 'var(--text-main)' }">Correo</label>
               <input
                 v-model="newClientForm.email"
                 type="email"
-                class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                class="w-full rounded-md border px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                :style="{
+                  background: 'var(--input-bg)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
               />
             </div>
 
             <div class="space-y-1">
-              <label class="block text-slate-300">Cargo</label>
+              <label class="block" :style="{ color: 'var(--text-main)' }">Cargo</label>
               <input
                 v-model="newClientForm.cargo"
                 type="text"
-                class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                class="w-full rounded-md border px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                :style="{
+                  background: 'var(--input-bg)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
               />
             </div>
 
             <div class="space-y-1">
-              <label class="block text-slate-300">Área</label>
+              <label class="block" :style="{ color: 'var(--text-main)' }">Área</label>
               <input
-                v-model="newClientForm.supportArea"
+                v-model="newClientForm.clientArea"
                 type="text"
-                class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                placeholder="Ej: Sistemas, Talento humano..."
+                class="w-full rounded-md border px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                :style="{
+                  background: 'var(--input-bg)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
+                placeholder="Ej: Talento Humano, Compras, Contabilidad..."
               />
             </div>
 
             <div class="space-y-1">
-              <label class="block text-slate-300">Sede</label>
+              <label class="block" :style="{ color: 'var(--text-main)' }">Sede</label>
               <input
                 v-model="newClientForm.sede"
                 type="text"
-                class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                class="w-full rounded-md border px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                :style="{
+                  background: 'var(--input-bg)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
               />
             </div>
 
             <div class="space-y-1">
-              <label class="block text-slate-300">Contraseña inicial</label>
+              <label class="block" :style="{ color: 'var(--text-main)' }">Contraseña inicial</label>
               <div class="relative">
                 <input
                   v-model="newClientForm.password"
                   :type="showNewClientPassword ? 'text' : 'password'"
-                  class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 pr-16 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  class="w-full rounded-md border px-3 py-1.5 pr-16 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  :style="{
+                    background: 'var(--input-bg)',
+                    borderColor: 'var(--border-main)',
+                    color: 'var(--text-main)',
+                  }"
                 />
                 <button
                   type="button"
-                  class="absolute inset-y-0 right-2 text-[10px] text-slate-400 hover:text-slate-200"
+                  class="absolute inset-y-0 right-2 text-[10px]"
+                  :style="{ color: 'var(--text-soft)' }"
                   @click="showNewClientPassword = !showNewClientPassword"
                 >
-                  {{ showNewClientPassword ? "Ocultar" : "Ver" }}
+                  {{ showNewClientPassword ? 'Ocultar' : 'Ver' }}
                 </button>
               </div>
-              <p class="text-[10px] text-slate-500">
-                El cliente podrá cambiarla más adelante (implementación futura).
-              </p>
             </div>
 
-            <div class="flex items-center gap-2 mt-1">
+            <div class="flex items-center gap-2 mt-2">
               <input
                 v-model="newClientForm.isActive"
                 id="newClientActive"
                 type="checkbox"
-                class="w-3 h-3 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500"
+                class="w-3 h-3 rounded"
+                style="accent-color: #10b981"
               />
-              <label for="newClientActive" class="text-[11px] text-slate-300">
+              <label
+                for="newClientActive"
+                class="text-[11px]"
+                :style="{ color: 'var(--text-main)' }"
+              >
                 Cliente activo
               </label>
             </div>
@@ -636,19 +937,21 @@ onMounted(async () => {
           <div class="mt-5 flex justify-end gap-2 text-xs">
             <button
               type="button"
-              class="px-3 py-1.5 rounded-md bg-slate-700 hover:bg-slate-600"
+              class="px-4 py-2 rounded-lg border transition-colors hover:bg-black/5"
+              :style="{
+                background: 'var(--bg-soft)',
+                borderColor: 'var(--border-main)',
+                color: 'var(--text-main)',
+              }"
               @click="showNewModal = false"
             >
               Cancelar
             </button>
             <button
               type="button"
-              class="px-3 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 font-semibold disabled:opacity-50"
-              :disabled="
-                !newClientForm.name ||
-                !newClientForm.email ||
-                !newClientForm.password
-              "
+              class="px-4 py-2 rounded-lg font-semibold text-white transition-colors hover:bg-emerald-600 disabled:opacity-50"
+              style="background: #10b981"
+              :disabled="!newClientForm.name || !newClientForm.email || !newClientForm.password"
               @click="createClient"
             >
               Crear cliente
@@ -660,90 +963,127 @@ onMounted(async () => {
       <!-- MODAL EDITAR CLIENTE -->
       <div
         v-if="showEditModal"
-        class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+        class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
       >
         <div
-          class="w-full max-w-md bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-xl"
+          class="w-full max-w-md rounded-2xl p-6 shadow-xl border"
+          :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
         >
           <h2 class="text-lg font-semibold mb-1">Editar cliente</h2>
-          <p class="text-[11px] text-slate-400 mb-4">
+          <p class="text-[11px] mb-4" :style="{ color: 'var(--text-soft)' }">
             Actualiza los datos del usuario final.
           </p>
 
           <div class="space-y-3 text-xs">
             <div class="space-y-1">
-              <label class="block text-slate-300">Nombre completo</label>
+              <label class="block" :style="{ color: 'var(--text-main)' }">Nombre completo</label>
               <input
                 v-model="editClientForm.name"
                 type="text"
-                class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                class="w-full rounded-md border px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                :style="{
+                  background: 'var(--input-bg)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
               />
             </div>
 
             <div class="space-y-1">
-              <label class="block text-slate-300">Correo</label>
+              <label class="block" :style="{ color: 'var(--text-main)' }">Correo</label>
               <input
                 v-model="editClientForm.email"
                 type="email"
-                class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                class="w-full rounded-md border px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                :style="{
+                  background: 'var(--input-bg)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
               />
             </div>
 
             <div class="space-y-1">
-              <label class="block text-slate-300">Cargo</label>
+              <label class="block" :style="{ color: 'var(--text-main)' }">Cargo</label>
               <input
                 v-model="editClientForm.cargo"
                 type="text"
-                class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                class="w-full rounded-md border px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                :style="{
+                  background: 'var(--input-bg)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
               />
             </div>
 
             <div class="space-y-1">
-              <label class="block text-slate-300">Área</label>
+              <label class="block" :style="{ color: 'var(--text-main)' }">Área</label>
               <input
-                v-model="editClientForm.supportArea"
+                v-model="editClientForm.clientArea"
                 type="text"
-                class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                placeholder="Ej: Sistemas, Talento humano..."
+                class="w-full rounded-md border px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                :style="{
+                  background: 'var(--input-bg)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
+                placeholder="Ej: Talento Humano, Compras, Contabilidad..."
               />
             </div>
 
             <div class="space-y-1">
-              <label class="block text-slate-300">Sede</label>
+              <label class="block" :style="{ color: 'var(--text-main)' }">Sede</label>
               <input
                 v-model="editClientForm.sede"
                 type="text"
-                class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                class="w-full rounded-md border px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                :style="{
+                  background: 'var(--input-bg)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
               />
             </div>
 
             <div class="space-y-1">
-              <label class="block text-slate-300">Nueva contraseña</label>
+              <label class="block" :style="{ color: 'var(--text-main)' }">Nueva contraseña</label>
               <div class="relative">
                 <input
                   v-model="editClientForm.password"
                   :type="showEditClientPassword ? 'text' : 'password'"
-                  class="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 pr-16 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  class="w-full rounded-md border px-3 py-1.5 pr-16 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   placeholder="Dejar en blanco para no cambiarla"
+                  :style="{
+                    background: 'var(--input-bg)',
+                    borderColor: 'var(--border-main)',
+                    color: 'var(--text-main)',
+                  }"
                 />
                 <button
                   type="button"
-                  class="absolute inset-y-0 right-2 text-[10px] text-slate-400 hover:text-slate-200"
+                  class="absolute inset-y-0 right-2 text-[10px]"
+                  :style="{ color: 'var(--text-soft)' }"
                   @click="showEditClientPassword = !showEditClientPassword"
                 >
-                  {{ showEditClientPassword ? "Ocultar" : "Ver" }}
+                  {{ showEditClientPassword ? 'Ocultar' : 'Ver' }}
                 </button>
               </div>
             </div>
 
-            <div class="flex items-center gap-2 mt-1">
+            <div class="flex items-center gap-2 mt-2">
               <input
                 v-model="editClientForm.isActive"
                 id="editClientActive"
                 type="checkbox"
-                class="w-3 h-3 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500"
+                class="w-3 h-3 rounded"
+                style="accent-color: #10b981"
               />
-              <label for="editClientActive" class="text-[11px] text-slate-300">
+              <label
+                for="editClientActive"
+                class="text-[11px]"
+                :style="{ color: 'var(--text-main)' }"
+              >
                 Cliente activo
               </label>
             </div>
@@ -752,17 +1092,74 @@ onMounted(async () => {
           <div class="mt-5 flex justify-end gap-2 text-xs">
             <button
               type="button"
-              class="px-3 py-1.5 rounded-md bg-slate-700 hover:bg-slate-600"
+              class="px-4 py-2 rounded-lg border transition-colors hover:bg-black/5"
+              :style="{
+                background: 'var(--bg-soft)',
+                borderColor: 'var(--border-main)',
+                color: 'var(--text-main)',
+              }"
               @click="showEditModal = false"
             >
               Cancelar
             </button>
             <button
               type="button"
-              class="px-3 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 font-semibold"
+              class="px-4 py-2 rounded-lg font-semibold text-white transition-colors hover:bg-emerald-600"
+              style="background: #10b981"
               @click="updateClient"
             >
               Guardar cambios
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- MODAL ELIMINAR CLIENTE -->
+      <div
+        v-if="showDeleteModal"
+        class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+      >
+        <div
+          class="w-full max-w-md rounded-2xl p-6 shadow-xl border"
+          :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
+        >
+          <h2 class="text-lg font-semibold mb-1" style="color: #f43f5e">Eliminar cliente</h2>
+          <p class="text-[11px] mb-4" :style="{ color: 'var(--text-soft)' }">
+            ¿Estás seguro que quieres <b>eliminar</b> este cliente?
+          </p>
+
+          <div
+            class="rounded-lg border p-4 text-xs"
+            :style="{ background: 'var(--bg-soft)', borderColor: 'var(--border-main)' }"
+          >
+            <p :style="{ color: 'var(--text-main)' }">
+              <b>{{ deleteClientTarget.name }}</b> ({{ deleteClientTarget.email }})
+            </p>
+            <p class="text-[11px] mt-1" :style="{ color: 'var(--text-muted)' }">
+              ID: {{ deleteClientTarget.id }}
+            </p>
+          </div>
+
+          <div class="mt-5 flex justify-end gap-2 text-xs">
+            <button
+              type="button"
+              class="px-4 py-2 rounded-lg border transition-colors hover:bg-black/5"
+              :style="{
+                background: 'var(--bg-soft)',
+                borderColor: 'var(--border-main)',
+                color: 'var(--text-main)',
+              }"
+              @click="showDeleteModal = false"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              class="px-4 py-2 rounded-lg font-semibold text-white transition-colors hover:bg-rose-600"
+              style="background: #f43f5e"
+              @click="confirmDeleteClient"
+            >
+              Sí, eliminar
             </button>
           </div>
         </div>

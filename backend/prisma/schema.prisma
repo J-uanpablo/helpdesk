@@ -31,6 +31,8 @@ model User {
   // Mensajes enviados en tickets (chat)
   ticketMessagesSent TicketMessage[] @relation("TicketMessageSender")
 
+  quickReplies QuickReply[]
+
   // ✅ RELACIÓN INVERSA OBLIGATORIA PARA RESET PASSWORD
   passwordResetTokens PasswordResetToken[]
 }
@@ -88,15 +90,16 @@ model TicketAttachment {
 }
 
 model Ticket {
-  id          Int                @id @default(autoincrement())
-  subject     String
-  description String
-  area        String? // área a la que va dirigido el ticket
-  status      TicketStatus       @default(PENDING)
-  priority    TicketPriority     @default(MEDIUM)
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
-  attachments TicketAttachment[]
+  id           Int                 @id @default(autoincrement())
+  subject      String
+  description  String
+  area         String? // área a la que va dirigido el ticket
+  status       TicketStatus        @default(PENDING)
+  priority     TicketPriority      @default(MEDIUM)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  attachments  TicketAttachment[]
+  satisfaction TicketSatisfaction?
 
   // Usuario que creó el ticket
   createdById Int
@@ -109,6 +112,23 @@ model Ticket {
   // Historial de cambios del ticket
   history  TicketHistory[]
   messages TicketMessage[]
+
+  resolvedAt     DateTime?
+  closedAt       DateTime?
+  lastActivityAt DateTime? // última actividad del chat (mensajes / estado)
+}
+
+model TicketSatisfaction {
+  id        Int      @id @default(autoincrement())
+  ticketId  Int      @unique
+  rating    Int // 1..5
+  comment   String?  @db.Text
+  createdAt DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([rating])
+  @@index([createdAt])
 }
 
 model TicketHistory {
@@ -175,4 +195,21 @@ model PasswordResetToken {
 
   @@index([userId])
   @@index([tokenHash])
+}
+
+model QuickReply {
+  id        Int      @id @default(autoincrement())
+  title     String
+  content   String   @db.Text
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // ✅ dueño de la plantilla (privada)
+  createdById Int
+  createdBy   User @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([createdById])
+  @@index([isActive])
+  @@index([createdAt])
 }

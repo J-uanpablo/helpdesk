@@ -25,7 +25,7 @@ export class UsersService {
           some: {
             role: {
               name: {
-                in: ['admin', 'support', 'super-admin'], // 👈 incluimos super-admin
+                in: ['admin', 'support', 'super-admin'],
               },
             },
           },
@@ -46,7 +46,6 @@ export class UsersService {
     return users.map((u) => {
       const roleNames = u.roles.map((r) => r.role.name);
 
-      // Prioridad: super-admin > admin > support
       const mainRole = roleNames.includes('super-admin')
         ? 'super-admin'
         : roleNames.includes('admin')
@@ -59,6 +58,7 @@ export class UsersService {
         id: u.id,
         name: u.name,
         email: u.email,
+        cargo: (u as any).cargo ?? null,
         isActive: u.isActive,
         supportArea: u.supportArea,
         roles: roleNames,
@@ -70,24 +70,25 @@ export class UsersService {
 
   // ============================================================
   // 🆕 2) CREAR NUEVO AGENTE / ADMIN / SUPER ADMIN
+  //    ✅ Si ya existe como cliente, lo convierte a agente
   // ============================================================
   async createAgent(dto: CreateAgentDto) {
-    const { email, password, name, role, supportArea } = dto;
+    const { email, password, name, cargo, role, supportArea, isActive } = dto;
 
-    // 👇 ahora permitimos también super-admin
+    const normalizedEmail = String(email).trim().toLowerCase();
+
     if (!['admin', 'support', 'super-admin'].includes(role)) {
       throw new BadRequestException('Rol inválido para agente');
     }
 
-    const existing = await this.prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (existing) {
+    if (role === 'support' && !supportArea) {
       throw new BadRequestException(
-        'Ya existe un usuario registrado con ese correo',
+        'supportArea es obligatoria para role=support',
       );
     }
+
+    const finalSupportArea =
+      role === 'support' ? String(supportArea).trim() : null;
 
     const roleEntity = await this.prisma.role.findUnique({
       where: { name: role },
@@ -99,36 +100,150 @@ export class UsersService {
       );
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const existing = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      include: {
+        roles: {
+          include: {
+            role: true,
+          },
+        },
+      },
+    });
 
-    const user = await this.prisma.$transaction(async (tx) => {
-      const newUser = await tx.user.create({
-        data: {
-          email,
-          passwordHash,
-          name,
-          isActive: true,
-          supportArea: supportArea ?? null,
+    const passwordHash = await bcrypt.hash(String(password), 10);
+
+    // ------------------------------------------------------------
+    // CASO 1: No existe => crear agente nuevo
+    // ------------------------------------------------------------
+    if (!existing) {
+      const user = await this.prisma.$transaction(async (tx) => {
+        const newUser = await tx.user.create({
+          data: {
+            email: normalizedEmail,
+            passwordHash,
+            name: String(name).trim(),
+            cargo: cargo ? String(cargo).trim() : null,
+            isActive: isActive ?? true,
+            supportArea: finalSupportArea,
+            sede: null,
+            clientArea: null,
+          },
+        });
+
+        await tx.userRole.create({
+          data: {
+            userId: newUser.id,
+            roleId: roleEntity.id,
+          },
+        });
+
+        return tx.user.findUniqueOrThrow({
+          where: { id: newUser.id },
+          include: {
+            roles: {
+              include: { role: true },
+            },
+          },
+        });
+      });
+
+      const roleNames = user.roles.map((r) => r.role.name);
+
+      return {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        cargo: (user as any).cargo ?? null,
+        supportArea: user.supportArea,
+        isActive: user.isActive,
+        roles: roleNames,
+        mainRole: role,
+        createdAt: user.createdAt,
+        convertedFromClient: false,
+      };
+    }
+
+    // ------------------------------------------------------------
+    // CASO 2: Ya existe
+    // ------------------------------------------------------------
+    const existingRoleNames = existing.roles.map((r) => r.role.name);
+
+    const alreadyStaff = existingRoleNames.some((r) =>
+      ['admin', 'support', 'super-admin'].includes(r),
+    );
+
+    if (alreadyStaff) {
+      throw new BadRequestException(
+        'Ya existe un usuario registrado con ese correo',
+      );
+    }
+
+    const isClient = existingRoleNames.includes('end-user');
+
+    if (!isClient) {
+      throw new BadRequestException(
+        'Ya existe un usuario con ese correo y no puede convertirse a agente',
+      );
+    }
+
+    // ------------------------------------------------------------
+    // CASO 3: Existe como cliente => convertirlo a agente
+    // ------------------------------------------------------------
+    const converted = await this.prisma.$transaction(async (tx) => {
+      await tx.userRole.deleteMany({
+        where: {
+          userId: existing.id,
+          role: {
+            name: 'end-user',
+          },
         },
       });
 
       await tx.userRole.create({
         data: {
-          userId: newUser.id,
+          userId: existing.id,
           roleId: roleEntity.id,
         },
       });
 
-      return newUser;
+      await tx.user.update({
+        where: { id: existing.id },
+        data: {
+          name: String(name).trim(),
+          email: normalizedEmail,
+          passwordHash,
+          cargo: cargo ? String(cargo).trim() : null,
+          isActive: isActive ?? true,
+          supportArea: finalSupportArea,
+          sede: null,
+          clientArea: null,
+        },
+      });
+
+      return tx.user.findUniqueOrThrow({
+        where: { id: existing.id },
+        include: {
+          roles: {
+            include: { role: true },
+          },
+        },
+      });
     });
 
+    const convertedRoleNames = converted.roles.map((r) => r.role.name);
+
     return {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      supportArea: user.supportArea,
-      isActive: user.isActive,
+      id: converted.id,
+      name: converted.name,
+      email: converted.email,
+      cargo: (converted as any).cargo ?? null,
+      supportArea: converted.supportArea,
+      isActive: converted.isActive,
+      roles: convertedRoleNames,
       mainRole: role,
+      createdAt: converted.createdAt,
+      convertedFromClient: true,
     };
   }
 
@@ -152,14 +267,10 @@ export class UsersService {
     let passwordHash: string | undefined;
 
     if (dto.password) {
-      passwordHash = await bcrypt.hash(dto.password, 10);
+      passwordHash = await bcrypt.hash(String(dto.password), 10);
     }
 
-    // Si envían role, actualizamos el rol principal
-    if (
-      dto.role &&
-      ['admin', 'support', 'super-admin'].includes(dto.role) // 👈 también super-admin
-    ) {
+    if (dto.role && ['admin', 'support', 'super-admin'].includes(dto.role)) {
       const newRole = await this.prisma.role.findUnique({
         where: { name: dto.role },
       });
@@ -169,17 +280,15 @@ export class UsersService {
       }
 
       await this.prisma.$transaction(async (tx) => {
-        // Eliminamos relaciones actuales de roles "de staff"
         await tx.userRole.deleteMany({
           where: {
             userId: user.id,
             role: {
-              name: { in: ['admin', 'support', 'super-admin'] }, // 👈 borramos cualquiera de estos
+              name: { in: ['admin', 'support', 'super-admin'] },
             },
           },
         });
 
-        // Creamos la relación con el nuevo rol
         await tx.userRole.create({
           data: {
             userId: user.id,
@@ -192,10 +301,23 @@ export class UsersService {
     const updated = await this.prisma.user.update({
       where: { id },
       data: {
-        name: dto.name ?? user.name,
-        email: dto.email ?? user.email,
+        name: dto.name !== undefined ? String(dto.name).trim() : user.name,
+        email:
+          dto.email !== undefined
+            ? String(dto.email).trim().toLowerCase()
+            : user.email,
+        cargo:
+          dto.cargo !== undefined
+            ? dto.cargo
+              ? String(dto.cargo).trim()
+              : null
+            : (user as any).cargo,
         supportArea:
-          dto.supportArea !== undefined ? dto.supportArea : user.supportArea,
+          dto.supportArea !== undefined
+            ? dto.supportArea
+              ? String(dto.supportArea).trim()
+              : null
+            : user.supportArea,
         isActive: dto.isActive !== undefined ? dto.isActive : user.isActive,
         ...(passwordHash ? { passwordHash } : {}),
       },
@@ -220,6 +342,7 @@ export class UsersService {
       id: updated.id,
       name: updated.name,
       email: updated.email,
+      cargo: (updated as any).cargo ?? null,
       supportArea: updated.supportArea,
       isActive: updated.isActive,
       roles: roleNames,
@@ -227,8 +350,10 @@ export class UsersService {
       createdAt: updated.createdAt,
     };
   }
+
   // ============================================================
   // 👥 4) CLIENTES (end-user)
+  //    ✅ Solo lista usuarios que todavía tengan rol end-user
   // ============================================================
   async listClients() {
     const users = await this.prisma.user.findMany({
@@ -251,9 +376,9 @@ export class UsersService {
       id: u.id,
       name: u.name,
       email: u.email,
-      cargo: (u as any).cargo ?? null, // si añadiste estos campos al schema
+      cargo: (u as any).cargo ?? null,
       sede: (u as any).sede ?? null,
-      supportArea: (u as any).supportArea ?? null,
+      clientArea: (u as any).clientArea ?? null,
       isActive: u.isActive,
       createdAt: u.createdAt,
     }));
@@ -265,10 +390,29 @@ export class UsersService {
   async createClient(dto: CreateClientDto) {
     const { name, email, cargo, sede, password, clientArea } = dto as any;
 
-    const existing = await this.prisma.user.findUnique({ where: { email } });
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    const existing = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      include: {
+        roles: {
+          include: { role: true },
+        },
+      },
+    });
+
     if (existing) {
+      const existingRoleNames = existing.roles.map((r) => r.role.name);
+      const isClient = existingRoleNames.includes('end-user');
+
+      if (isClient) {
+        throw new BadRequestException(
+          'Ya existe un usuario registrado con ese correo',
+        );
+      }
+
       throw new BadRequestException(
-        'Ya existe un usuario registrado con ese correo',
+        'Ese correo ya pertenece a un agente o administrador',
       );
     }
 
@@ -293,18 +437,13 @@ export class UsersService {
     const user = await this.prisma.$transaction(async (tx) => {
       const newUser = await tx.user.create({
         data: {
-          email,
+          email: normalizedEmail,
           passwordHash,
-          name,
+          name: String(name).trim(),
           isActive: dto.isActive ?? true,
-
-          cargo: cargo ?? null,
-          sede: sede ?? null,
-
-          // ✅ Área del cliente (texto libre)
-          clientArea: clientArea ?? null,
-
-          // ⛔️ NO uses supportArea para clientes
+          cargo: cargo ? String(cargo).trim() : null,
+          sede: sede ? String(sede).trim() : null,
+          clientArea: clientArea ? String(clientArea).trim() : null,
           supportArea: null,
         },
       });
@@ -342,7 +481,6 @@ export class UsersService {
       throw new NotFoundException('Cliente no encontrado');
     }
 
-    // ✅ si llega password, se actualiza
     let passwordHash: string | undefined;
     if (dto.password !== undefined) {
       const pwd = String(dto.password || '').trim();
@@ -355,23 +493,31 @@ export class UsersService {
     const updated = await this.prisma.user.update({
       where: { id },
       data: {
-        name: dto.name ?? user.name,
-        email: dto.email ?? user.email,
-
-        cargo: dto.cargo ?? (user as any).cargo,
-        sede: dto.sede ?? (user as any).sede,
-
-        // ✅ área libre del cliente
+        name: dto.name !== undefined ? String(dto.name).trim() : user.name,
+        email:
+          dto.email !== undefined
+            ? String(dto.email).trim().toLowerCase()
+            : user.email,
+        cargo:
+          dto.cargo !== undefined
+            ? dto.cargo
+              ? String(dto.cargo).trim()
+              : null
+            : (user as any).cargo,
+        sede:
+          dto.sede !== undefined
+            ? dto.sede
+              ? String(dto.sede).trim()
+              : null
+            : (user as any).sede,
         clientArea:
           (dto as any).clientArea !== undefined
             ? (dto as any).clientArea
+              ? String((dto as any).clientArea).trim()
+              : null
             : (user as any).clientArea,
-
-        // ⛔️ Asegura que un cliente no use supportArea
         supportArea: null,
-
-        isActive: dto.isActive ?? user.isActive,
-
+        isActive: dto.isActive !== undefined ? dto.isActive : user.isActive,
         ...(passwordHash ? { passwordHash } : {}),
       },
     });
@@ -385,5 +531,70 @@ export class UsersService {
       clientArea: (updated as any).clientArea ?? null,
       isActive: updated.isActive,
     };
+  }
+
+  // =========================================
+  // 🗑️ ELIMINAR CLIENTE
+  //    ✅ Ya no borra físicamente: desactiva
+  // =========================================
+  async deleteClient(id: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: { roles: { include: { role: true } } },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
+    const roleNames = user.roles.map((r) => r.role.name);
+    const isClient = roleNames.includes('end-user');
+
+    if (!isClient) {
+      throw new BadRequestException('El usuario no es un cliente');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: {
+        isActive: false,
+      },
+    });
+
+    return { ok: true, id: updated.id, isActive: updated.isActive };
+  }
+
+  // =========================================
+  // ✏️ ELIMINAR AGENTE / ADMIN / SUPER ADMIN (SOFT DELETE)
+  // =========================================
+  async deleteAgent(id: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: { roles: { include: { role: true } } },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    const roleNames = user.roles.map((r) => r.role.name);
+    const isStaff = roleNames.some((r) =>
+      ['admin', 'support', 'super-admin'].includes(r),
+    );
+
+    if (!isStaff) {
+      throw new BadRequestException('El usuario no es un agente/admin');
+    }
+
+    if (roleNames.includes('super-admin')) {
+      throw new BadRequestException('No puedes eliminar un super-admin');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: { isActive: false },
+    });
+
+    return { ok: true, id: updated.id, isActive: updated.isActive };
   }
 }

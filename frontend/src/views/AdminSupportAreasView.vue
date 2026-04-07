@@ -1,284 +1,7 @@
 <!-- src/views/AdminSupportAreasView.vue -->
-<template>
-  <main class="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-    <!-- Header -->
-    <header
-      class="px-6 py-4 border-b border-slate-800 flex items-center justify-between"
-    >
-      <div>
-        <h1 class="text-xl md:text-2xl font-bold">
-          Administración de áreas de soporte
-        </h1>
-        <p class="text-xs text-slate-400 mt-1">
-          Crea, edita y desactiva áreas para asignarlas a los agentes.
-        </p>
-      </div>
-
-      <router-link
-        to="/soporte"
-        class="text-xs px-3 py-1.5 rounded border border-slate-700 hover:bg-slate-800/70"
-      >
-        ← Volver al panel
-      </router-link>
-    </header>
-
-    <!-- Contenido principal -->
-    <section class="flex-1 px-6 py-4">
-      <!-- Barra superior: botón + resumen -->
-      <div
-        class="mb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
-      >
-        <button
-          type="button"
-          class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-emerald-500 hover:bg-emerald-600 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-          @click="openCreateModal"
-        >
-          <span class="text-lg leading-none">＋</span>
-          Nueva área
-        </button>
-
-        <p class="text-[11px] text-slate-400">
-          Total áreas:
-          <span class="font-semibold text-slate-100">{{ totalAreas }}</span> ·
-          Activas:
-          <span class="font-semibold text-emerald-400">{{ activeAreas }}</span>
-          · Inactivas:
-          <span class="font-semibold text-rose-300">{{ inactiveAreas }}</span>
-        </p>
-      </div>
-
-      <!-- Mensajes de error -->
-      <div
-        v-if="error"
-        class="mb-3 rounded-md border border-rose-500 bg-rose-500/10 px-4 py-2 text-xs text-rose-100"
-      >
-        {{ error }}
-      </div>
-
-      <!-- Tabla / lista -->
-      <div
-        class="border border-slate-800 rounded-xl overflow-hidden bg-slate-900/60"
-      >
-        <!-- Encabezado de tabla -->
-        <div
-          class="hidden md:grid md:grid-cols-[2fr,1fr,1.5fr,1fr] gap-3 px-4 py-2 border-b border-slate-800 text-[11px] uppercase tracking-wide text-slate-400 bg-slate-950/70"
-        >
-          <span>Área</span>
-          <span class="text-center">Estado</span>
-          <span class="text-center">Creada</span>
-          <span class="text-right">Acciones</span>
-        </div>
-
-        <!-- Loading -->
-        <div
-          v-if="isLoading"
-          class="px-4 py-6 text-center text-xs text-slate-400"
-        >
-          Cargando áreas de soporte...
-        </div>
-
-        <!-- Sin datos -->
-        <div
-          v-else-if="areas.length === 0"
-          class="px-4 py-6 text-center text-xs text-slate-500"
-        >
-          No hay áreas creadas todavía. <br />
-          Pulsa
-          <span class="font-semibold text-slate-200">“Nueva área”</span>
-          para registrar la primera.
-        </div>
-
-        <!-- Lista de áreas -->
-        <ul v-else class="divide-y divide-slate-800 text-sm">
-          <li
-            v-for="area in areas"
-            :key="area.id"
-            class="px-4 py-3 flex flex-col gap-2 md:grid md:grid-cols-[2fr,1fr,1.5fr,1fr] md:items-center"
-          >
-            <!-- Nombre -->
-            <div>
-              <p class="font-semibold text-slate-100">
-                {{ area.name }}
-              </p>
-              <p class="text-[11px] text-slate-500 md:hidden mt-0.5">
-                Creada:
-                {{ formatDate(area.createdAt) }}
-              </p>
-            </div>
-
-            <!-- Estado -->
-            <div class="md:text-center">
-              <span
-                class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border"
-                :class="
-                  area.isActive
-                    ? 'border-emerald-500 text-emerald-300 bg-emerald-500/10'
-                    : 'border-rose-500 text-rose-300 bg-rose-500/10'
-                "
-              >
-                <span
-                  class="w-1.5 h-1.5 rounded-full"
-                  :class="area.isActive ? 'bg-emerald-400' : 'bg-rose-400'"
-                />
-                {{ area.isActive ? "Activa" : "Inactiva" }}
-              </span>
-            </div>
-
-            <!-- Fecha creada (desktop) -->
-            <div class="hidden md:block text-center text-[11px] text-slate-400">
-              {{ formatDate(area.createdAt) }}
-            </div>
-
-            <!-- Acciones -->
-            <div class="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                class="px-2 py-1 rounded-md border border-slate-700 text-[11px] hover:bg-slate-800/80"
-                @click="openEditModal(area)"
-              >
-                Editar
-              </button>
-
-              <button
-                type="button"
-                class="px-2 py-1 rounded-md border text-[11px]"
-                :class="
-                  area.isActive
-                    ? 'border-amber-500 text-amber-300 hover:bg-amber-500/10'
-                    : 'border-emerald-500 text-emerald-300 hover:bg-emerald-500/10'
-                "
-                @click="toggleActive(area)"
-              >
-                {{ area.isActive ? "Desactivar" : "Activar" }}
-              </button>
-
-              <button
-                type="button"
-                class="px-2 py-1 rounded-md border border-rose-500 text-[11px] text-rose-300 hover:bg-rose-500/10"
-                @click="confirmSoftDelete(area)"
-              >
-                Eliminar
-              </button>
-            </div>
-          </li>
-        </ul>
-      </div>
-    </section>
-
-    <!-- Modal crear / editar área -->
-    <div
-      v-if="showModal"
-      class="fixed inset-0 z-40 flex items-center justify-center bg-black/60"
-    >
-      <div
-        class="w-full max-w-md rounded-xl bg-slate-950 border border-slate-800 shadow-xl p-5"
-      >
-        <h2 class="text-lg font-semibold mb-1">
-          {{ editingArea ? "Editar área" : "Nueva área" }}
-        </h2>
-        <p class="text-[11px] text-slate-400 mb-4">
-          Define el nombre del área tal como aparecerá al cliente y a los
-          agentes.
-        </p>
-
-        <form class="space-y-4" @submit.prevent="handleSubmit">
-          <div>
-            <label class="block text-[11px] text-slate-300 mb-1">
-              Nombre del área
-            </label>
-            <input
-              v-model="form.name"
-              type="text"
-              class="w-full px-3 py-2 rounded-md bg-slate-900 border border-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              placeholder="Ej: Sistemas, Talento Humano, Mantenimiento..."
-            />
-          </div>
-
-          <div class="flex items-center justify-between">
-            <label class="flex items-center gap-2 text-[11px] text-slate-300">
-              <input
-                v-model="form.isActive"
-                type="checkbox"
-                class="rounded border-slate-600 bg-slate-900"
-              />
-              <span>Área activa</span>
-            </label>
-          </div>
-
-          <div class="flex items-center justify-end gap-2 pt-2">
-            <button
-              type="button"
-              class="px-3 py-1.5 rounded-md border border-slate-600 text-xs hover:bg-slate-800/80"
-              @click="closeModal"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              class="px-4 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-              :disabled="isSaving || !form.name.trim()"
-            >
-              {{ isSaving ? "Guardando..." : "Guardar" }}
-            </button>
-          </div>
-
-          <p v-if="formError" class="mt-2 text-[11px] text-rose-300 text-right">
-            {{ formError }}
-          </p>
-        </form>
-      </div>
-    </div>
-
-    <!-- Modal confirmación eliminación -->
-    <div
-      v-if="deleteTarget"
-      class="fixed inset-0 z-40 flex items-center justify-center bg-black/60"
-    >
-      <div
-        class="w-full max-w-md rounded-xl bg-slate-950 border border-rose-500/60 shadow-xl p-5"
-      >
-        <h2 class="text-lg font-semibold mb-2 text-rose-200">
-          ¿Eliminar área?
-        </h2>
-        <p class="text-[12px] text-slate-200 mb-4">
-          Estás a punto de marcar como
-          <span class="font-semibold">inactiva</span>
-          el área:
-        </p>
-        <p class="text-sm font-semibold mb-4 text-rose-100">
-          “{{ deleteTarget.name }}”
-        </p>
-        <p class="text-[11px] text-slate-400 mb-4">
-          Los tickets antiguos seguirán mostrando el nombre de esta área, pero
-          ya no aparecerá como opción para nuevas asignaciones si la dejas
-          inactiva.
-        </p>
-
-        <div class="flex items-center justify-end gap-2">
-          <button
-            type="button"
-            class="px-3 py-1.5 rounded-md border border-slate-600 text-xs hover:bg-slate-800/80"
-            @click="deleteTarget = null"
-          >
-            Cancelar
-          </button>
-          <button
-            type="button"
-            class="px-4 py-1.5 rounded-md bg-rose-600 hover:bg-rose-700 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-            :disabled="isDeleting"
-            @click="softDelete"
-          >
-            {{ isDeleting ? "Eliminando..." : "Eliminar área" }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </main>
-</template>
-
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { useAuth } from "../composables/useAuth";
+import { computed, onMounted, ref, watch } from 'vue';
+import { useAuth } from '../composables/useAuth';
 
 interface SupportArea {
   id: number;
@@ -288,54 +11,104 @@ interface SupportArea {
   updatedAt: string;
 }
 
-const { token, user } = useAuth();
+const { token } = useAuth();
 
 const areas = ref<SupportArea[]>([]);
 const isLoading = ref(false);
 const error = ref<string | null>(null);
 
-// Modal / formulario
+// menú de acciones
+const openMenuId = ref<number | null>(null);
+
+function toggleMenu(id: number) {
+  openMenuId.value = openMenuId.value === id ? null : id;
+}
+
+function closeMenu() {
+  openMenuId.value = null;
+}
+
+// filtros
+const searchText = ref('');
+const onlyActive = ref(false);
+
+// modal create / edit
 const showModal = ref(false);
 const editingArea = ref<SupportArea | null>(null);
 const isSaving = ref(false);
 const formError = ref<string | null>(null);
+
 const form = ref({
-  name: "",
+  name: '',
   isActive: true,
 });
 
-// Confirmación eliminación
+// modal delete
 const deleteTarget = ref<SupportArea | null>(null);
 const isDeleting = ref(false);
 
-// Contadores
-const totalAreas = computed(() => areas.value.length);
-const activeAreas = computed(
-  () => areas.value.filter((a) => a.isActive).length
-);
-const inactiveAreas = computed(
-  () => areas.value.filter((a) => !a.isActive).length
-);
+// computed
+const filteredAreas = computed(() => {
+  const text = searchText.value.trim().toLowerCase();
 
-// Helpers
+  return areas.value.filter(area => {
+    const matchesText = !text || area.name.toLowerCase().includes(text);
+    const matchesActive = !onlyActive.value || area.isActive;
+    return matchesText && matchesActive;
+  });
+});
+
+// paginación
+const page = ref(1);
+const pageSize = 8;
+
+const totalPages = computed(() => {
+  return Math.max(1, Math.ceil(filteredAreas.value.length / pageSize));
+});
+
+const paginatedAreas = computed(() => {
+  const start = (page.value - 1) * pageSize;
+  const end = start + pageSize;
+  return filteredAreas.value.slice(start, end);
+});
+
+function goToPage(newPage: number) {
+  if (newPage < 1 || newPage > totalPages.value) return;
+  page.value = newPage;
+}
+
+// reset página cuando cambien filtros
+watch([searchText, onlyActive], () => {
+  page.value = 1;
+});
+
+const totalAreas = computed(() => areas.value.length);
+const activeAreas = computed(() => areas.value.filter(a => a.isActive).length);
+const inactiveAreas = computed(() => areas.value.filter(a => !a.isActive).length);
+
+// helpers
 function formatDate(value: string | Date) {
-  const d = typeof value === "string" ? new Date(value) : value;
-  return d.toLocaleString("es-CO", {
-    dateStyle: "short",
-    timeStyle: "short",
+  const d = typeof value === 'string' ? new Date(value) : value;
+  return d.toLocaleString('es-CO', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
   });
 }
 
 function ensureToken(): string | null {
-  const jwt = (token.value ?? "").trim();
+  const jwt = (token.value ?? '').trim();
   if (!jwt) {
-    error.value = "No hay token de sesión. Inicia sesión nuevamente.";
+    error.value = 'No hay token de sesión. Inicia sesión nuevamente.';
     return null;
   }
   return jwt;
 }
 
-// Cargar áreas
+// load
 async function loadAreas() {
   error.value = null;
   const jwt = ensureToken();
@@ -343,7 +116,7 @@ async function loadAreas() {
 
   isLoading.value = true;
   try {
-    const res = await fetch("http://localhost:3000/support-areas", {
+    const res = await fetch('http://localhost:3000/support-areas', {
       headers: {
         Authorization: `Bearer ${jwt}`,
       },
@@ -353,29 +126,30 @@ async function loadAreas() {
       throw new Error(`Error ${res.status} al cargar las áreas`);
     }
 
-    const data = await res.json();
-    areas.value = data;
+    areas.value = await res.json();
   } catch (e: any) {
     console.error(e);
-    error.value = e.message ?? "No se pudieron cargar las áreas.";
+    error.value = e.message ?? 'No se pudieron cargar las áreas.';
   } finally {
     isLoading.value = false;
   }
 }
 
-// Abrir modal crear
+// abrir crear
 function openCreateModal() {
+  closeMenu();
   editingArea.value = null;
   form.value = {
-    name: "",
+    name: '',
     isActive: true,
   };
   formError.value = null;
   showModal.value = true;
 }
 
-// Abrir modal editar
+// abrir editar
 function openEditModal(area: SupportArea) {
+  closeMenu();
   editingArea.value = area;
   form.value = {
     name: area.name,
@@ -385,18 +159,18 @@ function openEditModal(area: SupportArea) {
   showModal.value = true;
 }
 
-// Cerrar modal
+// cerrar modal
 function closeModal() {
   showModal.value = false;
   editingArea.value = null;
   formError.value = null;
 }
 
-// Guardar (crear / editar)
+// guardar
 async function handleSubmit() {
   const name = form.value.name.trim();
   if (!name) {
-    formError.value = "El nombre del área es obligatorio.";
+    formError.value = 'El nombre del área es obligatorio.';
     return;
   }
 
@@ -408,11 +182,10 @@ async function handleSubmit() {
 
   try {
     if (!editingArea.value) {
-      // Crear
-      const res = await fetch("http://localhost:3000/support-areas", {
-        method: "POST",
+      const res = await fetch('http://localhost:3000/support-areas', {
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
           Authorization: `Bearer ${jwt}`,
         },
         body: JSON.stringify({
@@ -428,28 +201,24 @@ async function handleSubmit() {
       const created = await res.json();
       areas.value.push(created);
     } else {
-      // Editar
-      const res = await fetch(
-        `http://localhost:3000/support-areas/${editingArea.value.id}`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${jwt}`,
-          },
-          body: JSON.stringify({
-            name,
-            isActive: form.value.isActive,
-          }),
-        }
-      );
+      const res = await fetch(`http://localhost:3000/support-areas/${editingArea.value.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jwt}`,
+        },
+        body: JSON.stringify({
+          name,
+          isActive: form.value.isActive,
+        }),
+      });
 
       if (!res.ok) {
         throw new Error(`Error ${res.status} al actualizar área`);
       }
 
       const updated = await res.json();
-      const idx = areas.value.findIndex((a) => a.id === updated.id);
+      const idx = areas.value.findIndex(a => a.id === updated.id);
       if (idx !== -1) {
         areas.value[idx] = updated;
       }
@@ -458,23 +227,23 @@ async function handleSubmit() {
     closeModal();
   } catch (e: any) {
     console.error(e);
-    formError.value =
-      e.message ?? "No se pudo guardar el área. Intenta nuevamente.";
+    formError.value = e.message ?? 'No se pudo guardar el área.';
   } finally {
     isSaving.value = false;
   }
 }
 
-// Activar / desactivar
+// activar / desactivar
 async function toggleActive(area: SupportArea) {
+  closeMenu();
   const jwt = ensureToken();
   if (!jwt) return;
 
   try {
     const res = await fetch(`http://localhost:3000/support-areas/${area.id}`, {
-      method: "PATCH",
+      method: 'PATCH',
       headers: {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
         Authorization: `Bearer ${jwt}`,
       },
       body: JSON.stringify({
@@ -487,23 +256,23 @@ async function toggleActive(area: SupportArea) {
     }
 
     const updated = await res.json();
-    const idx = areas.value.findIndex((a) => a.id === updated.id);
+    const idx = areas.value.findIndex(a => a.id === updated.id);
     if (idx !== -1) {
       areas.value[idx] = updated;
     }
   } catch (e: any) {
     console.error(e);
-    error.value =
-      e.message ?? "No se pudo cambiar el estado del área seleccionada.";
+    error.value = e.message ?? 'No se pudo cambiar el estado del área.';
   }
 }
 
-// Confirmar eliminación (soft delete)
+// confirmar eliminar
 function confirmSoftDelete(area: SupportArea) {
+  closeMenu();
   deleteTarget.value = area;
 }
 
-// Ejecutar eliminación
+// eliminar
 async function softDelete() {
   if (!deleteTarget.value) return;
   const jwt = ensureToken();
@@ -511,23 +280,19 @@ async function softDelete() {
 
   isDeleting.value = true;
   try {
-    const res = await fetch(
-      `http://localhost:3000/support-areas/${deleteTarget.value.id}`,
-      {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${jwt}`,
-        },
-      }
-    );
+    const res = await fetch(`http://localhost:3000/support-areas/${deleteTarget.value.id}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+      },
+    });
 
     if (!res.ok) {
       throw new Error(`Error ${res.status} al eliminar área`);
     }
 
-    // DELETE devuelve el área actualizada (inactiva)
     const updated = await res.json();
-    const idx = areas.value.findIndex((a) => a.id === updated.id);
+    const idx = areas.value.findIndex(a => a.id === updated.id);
     if (idx !== -1) {
       areas.value[idx] = updated;
     }
@@ -535,7 +300,7 @@ async function softDelete() {
     deleteTarget.value = null;
   } catch (e: any) {
     console.error(e);
-    error.value = e.message ?? "No se pudo eliminar el área.";
+    error.value = e.message ?? 'No se pudo eliminar el área.';
   } finally {
     isDeleting.value = false;
   }
@@ -546,6 +311,516 @@ onMounted(() => {
 });
 </script>
 
-<style scoped>
-/* Puedes añadir pequeños ajustes si hace falta */
-</style>
+<template>
+  <div class="min-h-screen" :style="{ background: 'var(--bg-main)', color: 'var(--text-main)' }">
+    <main class="px-6 py-6 max-w-[1600px] mx-auto">
+      <div
+        class="w-full rounded-2xl border shadow-[0_0_0_1px_rgba(15,23,42,0.06)] backdrop-blur"
+        :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
+      >
+        <!-- HEADER -->
+        <div class="flex flex-col gap-4 p-6 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p class="text-xs" :style="{ color: 'var(--text-soft)' }">
+              Administración de áreas de soporte
+            </p>
+            <h1 class="mt-1 text-2xl font-bold tracking-tight">
+              Administración de áreas de soporte
+            </h1>
+            <p class="mt-1 text-xs" :style="{ color: 'var(--text-soft)' }">
+              Crea, edita y desactiva áreas para asignarlas a los agentes.
+            </p>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <div
+              class="hidden md:flex items-center gap-2 rounded-xl border px-3 py-2"
+              :style="{ background: 'var(--bg-soft)', borderColor: 'var(--border-main)' }"
+            >
+              <div class="text-[11px]" :style="{ color: 'var(--text-soft)' }">Áreas</div>
+              <div class="text-sm font-semibold">{{ totalAreas }}</div>
+            </div>
+
+            <button
+              type="button"
+              @click="openCreateModal"
+              class="inline-flex h-9 items-center gap-2 rounded-lg px-4 text-xs font-semibold text-white shadow-sm transition hover:opacity-95 active:scale-[0.99]"
+              style="background: #10b981"
+            >
+              <span class="text-base leading-none">＋</span>
+              Nueva área
+            </button>
+          </div>
+        </div>
+
+        <!-- TOOLBAR -->
+        <div class="border-t px-6 py-4" :style="{ borderColor: 'var(--border-main)' }">
+          <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div class="flex flex-1 items-center gap-2">
+              <span class="text-xs" :style="{ color: 'var(--text-soft)' }">Buscar</span>
+              <div class="relative flex-1 max-w-sm">
+                <input
+                  v-model="searchText"
+                  type="text"
+                  class="w-full rounded-xl border px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                  :style="{
+                    background: 'var(--input-bg)',
+                    borderColor: 'var(--border-main)',
+                    color: 'var(--text-main)',
+                  }"
+                  placeholder="Nombre del área..."
+                />
+                <div
+                  class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[10px]"
+                  :style="{ color: 'var(--text-muted)' }"
+                >
+                  ⌘K
+                </div>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-3">
+              <label class="flex items-center gap-2 cursor-pointer ml-2">
+                <div
+                  class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200"
+                  :style="{ background: onlyActive ? '#4f46e5' : 'var(--border-main)' }"
+                >
+                  <span
+                    class="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform duration-200 shadow-sm"
+                    :class="onlyActive ? 'translate-x-4' : 'translate-x-1'"
+                  />
+                </div>
+                <input v-model="onlyActive" type="checkbox" class="sr-only" />
+                <span class="text-xs font-medium" :style="{ color: 'var(--text-main)' }">
+                  Solo activas
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <div class="mt-3 flex items-center justify-between">
+            <p class="text-[11px]" :style="{ color: 'var(--text-muted)' }">
+              Mostrando
+              <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
+                {{ filteredAreas.length }}
+              </span>
+              de
+              <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
+                {{ totalAreas }}
+              </span>
+              áreas.
+            </p>
+
+            <p v-if="error" class="text-[11px]" style="color: #f43f5e">
+              {{ error }}
+            </p>
+          </div>
+        </div>
+
+        <!-- TABLA -->
+        <div class="px-6 pb-6">
+          <div
+            class="overflow-hidden rounded-2xl border"
+            :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
+          >
+            <div
+              class="flex items-center justify-between border-b px-4 py-3"
+              :style="{ borderColor: 'var(--border-main)' }"
+            >
+              <div class="text-xs font-semibold" :style="{ color: 'var(--text-main)' }">
+                Listado de áreas
+              </div>
+              <div class="text-[11px]" :style="{ color: 'var(--text-muted)' }">
+                Activas:
+                <span style="color: #10b981">{{ activeAreas }}</span>
+                · Inactivas:
+                <span style="color: #f43f5e">{{ inactiveAreas }}</span>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto min-h-[300px]">
+              <table class="min-w-full text-xs">
+                <thead :style="{ background: 'var(--bg-soft)', color: 'var(--text-soft)' }">
+                  <tr>
+                    <th class="px-4 py-3 text-left font-semibold">Área</th>
+                    <th class="px-4 py-3 text-left font-semibold">Estado</th>
+                    <th class="px-4 py-3 text-left font-semibold">Creado</th>
+                    <th class="px-4 py-3 text-right font-semibold">Acciones</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  <tr v-if="isLoading" :style="{ borderTop: `1px solid var(--border-main)` }">
+                    <td
+                      colspan="4"
+                      class="px-4 py-10 text-center"
+                      :style="{ color: 'var(--text-muted)' }"
+                    >
+                      Cargando áreas...
+                    </td>
+                  </tr>
+
+                  <tr
+                    v-else-if="!filteredAreas.length"
+                    :style="{ borderTop: `1px solid var(--border-main)` }"
+                  >
+                    <td
+                      colspan="4"
+                      class="px-4 py-10 text-center"
+                      :style="{ color: 'var(--text-muted)' }"
+                    >
+                      No hay áreas que coincidan con los filtros.
+                    </td>
+                  </tr>
+
+                  <tr
+                    v-for="area in paginatedAreas"
+                    :key="area.id"
+                    class="transition hover:bg-black/5 dark:hover:bg-white/5"
+                    :style="{ borderTop: `1px solid var(--border-main)` }"
+                  >
+                    <td class="px-4 py-3">
+                      <div class="flex flex-col">
+                        <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
+                          {{ area.name }}
+                        </span>
+                        <span class="text-[10px]" :style="{ color: 'var(--text-muted)' }">
+                          ID: {{ area.id }}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td class="px-4 py-3">
+                      <span
+                        class="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] border"
+                        :style="
+                          area.isActive
+                            ? {
+                                background: 'rgba(16,185,129,0.10)',
+                                color: '#10b981',
+                                borderColor: 'rgba(16,185,129,0.25)',
+                              }
+                            : {
+                                background: 'rgba(244,63,94,0.10)',
+                                color: '#f43f5e',
+                                borderColor: 'rgba(244,63,94,0.25)',
+                              }
+                        "
+                      >
+                        <span
+                          class="h-1.5 w-1.5 rounded-full"
+                          :style="{ background: area.isActive ? '#10b981' : '#f43f5e' }"
+                        />
+                        {{ area.isActive ? 'Activa' : 'Inactiva' }}
+                      </span>
+                    </td>
+
+                    <td class="px-4 py-3 whitespace-nowrap" :style="{ color: 'var(--text-soft)' }">
+                      {{ formatDate(area.createdAt) }}
+                    </td>
+
+                    <td class="px-4 py-3 relative">
+                      <div class="flex items-center justify-end gap-1">
+                        <button
+                          class="h-8 w-8 flex items-center justify-center rounded-lg border transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+                          :style="{
+                            background: 'var(--bg-panel)',
+                            borderColor: 'var(--border-main)',
+                            color: 'var(--text-main)',
+                          }"
+                          @click="openEditModal(area)"
+                          title="Editar área"
+                        >
+                          <svg
+                            class="w-3.5 h-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                            ></path>
+                          </svg>
+                        </button>
+
+                        <button
+                          class="h-8 w-8 flex items-center justify-center rounded-lg border transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+                          :style="{
+                            background: 'var(--bg-panel)',
+                            borderColor: 'var(--border-main)',
+                            color: 'var(--text-main)',
+                          }"
+                          @click="toggleMenu(area.id)"
+                        >
+                          <svg
+                            class="w-4 h-4"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"
+                            ></path>
+                          </svg>
+                        </button>
+                      </div>
+
+                      <div
+                        v-if="openMenuId === area.id"
+                        class="absolute right-6 top-10 w-36 rounded-xl shadow-lg border py-1.5 z-20"
+                        :style="{
+                          background: 'var(--bg-panel)',
+                          borderColor: 'var(--border-main)',
+                        }"
+                      >
+                        <div class="fixed inset-0 z-[-1]" @click="closeMenu"></div>
+
+                        <button
+                          @click="toggleActive(area)"
+                          class="w-full text-left px-4 py-2 text-xs hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex items-center gap-2"
+                          :style="{ color: 'var(--text-main)' }"
+                        >
+                          <span
+                            class="w-2 h-2 rounded-full"
+                            :style="{ background: area.isActive ? '#f59e0b' : '#10b981' }"
+                          ></span>
+                          {{ area.isActive ? 'Desactivar' : 'Activar' }}
+                        </button>
+
+                        <div
+                          class="border-t my-1 mx-2"
+                          :style="{ borderColor: 'var(--border-main)' }"
+                        ></div>
+
+                        <button
+                          @click="confirmSoftDelete(area)"
+                          class="w-full text-left px-4 py-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2"
+                        >
+                          <svg
+                            class="w-3 h-3"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                            ></path>
+                          </svg>
+                          Eliminar
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <tr
+                    v-for="n in Math.max(0, 8 - paginatedAreas.length)"
+                    :key="`ghost-area-${n}`"
+                    :style="{ borderTop: `1px solid var(--border-main)` }"
+                  >
+                    <td class="px-4 py-3 opacity-0">.</td>
+                    <td class="px-4 py-3 opacity-0">.</td>
+                    <td class="px-4 py-3 opacity-0">.</td>
+                    <td class="px-4 py-3 opacity-0">.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- PAGINACIÓN -->
+          <div
+            v-if="filteredAreas.length > pageSize"
+            class="mt-4 flex items-center justify-between"
+          >
+            <p class="text-[11px]" :style="{ color: 'var(--text-soft)' }">
+              Mostrando
+              <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
+                {{ (page - 1) * pageSize + 1 }}
+              </span>
+              -
+              <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
+                {{ Math.min(page * pageSize, filteredAreas.length) }}
+              </span>
+              de
+              <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
+                {{ filteredAreas.length }}
+              </span>
+              áreas
+            </p>
+
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                class="px-3 py-1.5 rounded-lg border text-xs transition disabled:opacity-50"
+                :style="{
+                  background: 'var(--bg-soft)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
+                :disabled="page === 1"
+                @click="goToPage(page - 1)"
+              >
+                Anterior
+              </button>
+
+              <span class="text-xs font-medium px-2" :style="{ color: 'var(--text-main)' }">
+                Página {{ page }} de {{ totalPages }}
+              </span>
+
+              <button
+                type="button"
+                class="px-3 py-1.5 rounded-lg border text-xs transition disabled:opacity-50"
+                :style="{
+                  background: 'var(--bg-soft)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
+                :disabled="page === totalPages"
+                @click="goToPage(page + 1)"
+              >
+                Siguiente
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MODAL NUEVA / EDITAR ÁREA -->
+      <div
+        v-if="showModal"
+        class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+      >
+        <div
+          class="w-full max-w-md rounded-2xl p-6 shadow-xl border"
+          :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
+        >
+          <h2 class="text-lg font-semibold mb-1">
+            {{ editingArea ? 'Editar área' : 'Nueva área' }}
+          </h2>
+          <p class="text-[11px] mb-4" :style="{ color: 'var(--text-soft)' }">
+            Define el nombre del área tal como aparecerá para agentes y tickets.
+          </p>
+
+          <div class="space-y-3 text-xs">
+            <div class="space-y-1">
+              <label class="block" :style="{ color: 'var(--text-main)' }">Nombre del área</label>
+              <input
+                v-model="form.name"
+                type="text"
+                class="w-full rounded-md border px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                :style="{
+                  background: 'var(--input-bg)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
+                placeholder="Ej: Sistemas, Compras, Talento Humano..."
+              />
+            </div>
+
+            <div class="flex items-center gap-2 mt-2">
+              <input
+                v-model="form.isActive"
+                id="areaIsActive"
+                type="checkbox"
+                class="w-3 h-3 rounded"
+                style="accent-color: #10b981"
+              />
+              <label for="areaIsActive" class="text-[11px]" :style="{ color: 'var(--text-main)' }">
+                Área activa
+              </label>
+            </div>
+          </div>
+
+          <div class="mt-5 flex justify-end gap-2 text-xs">
+            <button
+              type="button"
+              class="px-4 py-2 rounded-lg border transition-colors hover:bg-black/5"
+              :style="{
+                background: 'var(--bg-soft)',
+                borderColor: 'var(--border-main)',
+                color: 'var(--text-main)',
+              }"
+              @click="closeModal"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              class="px-4 py-2 rounded-lg font-semibold text-white transition-colors hover:bg-emerald-600 disabled:opacity-50"
+              style="background: #10b981"
+              :disabled="isSaving || !form.name.trim()"
+              @click="handleSubmit"
+            >
+              {{ isSaving ? 'Guardando...' : 'Guardar' }}
+            </button>
+          </div>
+
+          <p v-if="formError" class="mt-3 text-[11px] text-right" style="color: #f43f5e">
+            {{ formError }}
+          </p>
+        </div>
+      </div>
+
+      <!-- MODAL ELIMINAR -->
+      <div
+        v-if="deleteTarget"
+        class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+      >
+        <div
+          class="w-full max-w-md rounded-2xl p-6 shadow-xl border"
+          :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
+        >
+          <h2 class="text-lg font-semibold mb-1" style="color: #f43f5e">Eliminar área</h2>
+          <p class="text-[11px] mb-4" :style="{ color: 'var(--text-soft)' }">
+            ¿Estás seguro que quieres <b>eliminar</b> esta área?
+          </p>
+
+          <div
+            class="rounded-lg border p-4 text-xs"
+            :style="{ background: 'var(--bg-soft)', borderColor: 'var(--border-main)' }"
+          >
+            <p :style="{ color: 'var(--text-main)' }">
+              <b>{{ deleteTarget.name }}</b>
+            </p>
+            <p class="text-[11px] mt-1" :style="{ color: 'var(--text-muted)' }">
+              ID: {{ deleteTarget.id }}
+            </p>
+          </div>
+
+          <div class="mt-5 flex justify-end gap-2 text-xs">
+            <button
+              type="button"
+              class="px-4 py-2 rounded-lg border transition-colors hover:bg-black/5"
+              :style="{
+                background: 'var(--bg-soft)',
+                borderColor: 'var(--border-main)',
+                color: 'var(--text-main)',
+              }"
+              @click="deleteTarget = null"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              class="px-4 py-2 rounded-lg font-semibold text-white transition-colors hover:bg-rose-600 disabled:opacity-50"
+              style="background: #f43f5e"
+              :disabled="isDeleting"
+              @click="softDelete"
+            >
+              {{ isDeleting ? 'Eliminando...' : 'Sí, eliminar' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</template>

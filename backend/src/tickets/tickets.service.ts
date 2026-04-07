@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { TicketStatus } from '@prisma/client';
+import { TicketSatisfactionDto } from './dto/ticket-satisfaction.dto';
 
 // ✅ EMAIL
 import { sendMail } from '../services/mailer';
@@ -45,8 +46,6 @@ export class TicketsService {
    * - Siempre al cliente (creador)
    * - Si ticket tiene assignedToId => a ese agente
    * - Si NO tiene assignedToId => a todos los agentes del área (supportArea = area)
-   *
-   * Nota: en tu schema Ticket.area es String? (puede ser null)
    */
   private async notifyTicketCreated(params: {
     ticketId: number;
@@ -190,8 +189,6 @@ export class TicketsService {
     const subject: string | undefined = data.subject?.trim();
     const description: string | undefined = data.description?.trim();
 
-    // ✅ Ticket.area es String? en prisma, puede ser null
-    // NO usamos trim directo para no romper cuando venga null/undefined
     const area: string | null =
       typeof data.area === 'string' ? data.area.trim() : null;
 
@@ -202,8 +199,17 @@ export class TicketsService {
       throw new BadRequestException('Debes seleccionar un área válida');
     }
 
+    const now = new Date();
+
     const ticket = await this.prisma.ticket.create({
-      data: { subject, description, area, createdById: userId },
+      data: {
+        subject,
+        description,
+        area,
+        createdById: userId,
+        // ✅ actividad inicial
+        lastActivityAt: now,
+      },
       select: {
         id: true,
         subject: true,
@@ -211,7 +217,7 @@ export class TicketsService {
         createdAt: true,
         updatedAt: true,
         area: true,
-        assignedToId: true, // ✅ para email
+        assignedToId: true,
       },
     });
 
@@ -219,7 +225,7 @@ export class TicketsService {
       data: { content: description, ticketId: ticket.id, senderId: userId },
     });
 
-    // ✅ EMAIL NUEVO TICKET (cliente + agentes del área / agente asignado)
+    // ✅ EMAIL NUEVO TICKET
     await this.notifyTicketCreated({
       ticketId: ticket.id,
       subject: ticket.subject,
@@ -257,9 +263,18 @@ export class TicketsService {
       throw new BadRequestException('Debes seleccionar un área válida');
     }
 
+    const now = new Date();
+
     const result = await this.prisma.$transaction(async (tx) => {
       const ticket = await tx.ticket.create({
-        data: { subject, description, area, createdById: userId },
+        data: {
+          subject,
+          description,
+          area,
+          createdById: userId,
+          // ✅ actividad inicial
+          lastActivityAt: now,
+        },
         select: {
           id: true,
           subject: true,
@@ -292,7 +307,7 @@ export class TicketsService {
       return ticket;
     });
 
-    // ✅ EMAIL NUEVO TICKET (cliente + agentes del área / agente asignado)
+    // ✅ EMAIL NUEVO TICKET
     await this.notifyTicketCreated({
       ticketId: result.id,
       subject: result.subject,
@@ -336,7 +351,7 @@ export class TicketsService {
   }
 
   // ============================================================
-  // 4) VER TICKET INDIVIDUAL
+  // 4) VER TICKET INDIVIDUAL (✅ Opción A: incluye satisfaction)
   // ============================================================
   async findOne(ticketId: number) {
     const t = await this.prisma.ticket.findUnique({
@@ -347,6 +362,9 @@ export class TicketsService {
         },
         assignedTo: { select: { name: true, email: true } },
         attachments: true,
+
+        // ✅ CLAVE: para el modal (Opción A)
+        satisfaction: true,
       },
     });
 
@@ -379,9 +397,25 @@ export class TicketsService {
       }
     }
 
+    const now = new Date();
+
+    // ✅ Actualización + timestamps
+    const dataToUpdate: any = {
+      status,
+      lastActivityAt: now,
+    };
+
+    if (status === TicketStatus.RESOLVED) {
+      dataToUpdate.resolvedAt = now;
+    }
+
+    if (status === TicketStatus.CLOSED) {
+      dataToUpdate.closedAt = now;
+    }
+
     const updated = await this.prisma.ticket.update({
       where: { id: ticketId },
-      data: { status },
+      data: dataToUpdate,
     });
 
     // ✅ Si quedó CERRADO, enviar correo con transcript
@@ -396,7 +430,7 @@ export class TicketsService {
   }
 
   // ============================================================
-  // 8) MENSAJE TEXTO + updatedAt
+  // 8) MENSAJE TEXTO + activity
   // ============================================================
   async addMessage(data: {
     ticketId: number;
@@ -406,14 +440,20 @@ export class TicketsService {
     const { ticketId, content, senderId } = data;
     if (!content?.trim()) throw new BadRequestException('Mensaje vacío');
 
+    const now = new Date();
+
     const msg = await this.prisma.$transaction(async (tx) => {
       const created = await tx.ticketMessage.create({
         data: { content: content.trim(), ticketId, senderId },
       });
 
+      // ✅ actividad del chat
       await tx.ticket.update({
         where: { id: ticketId },
-        data: { updatedAt: new Date() },
+        data: {
+          updatedAt: now,
+          lastActivityAt: now,
+        },
       });
 
       return tx.ticketMessage.findUnique({
@@ -429,7 +469,7 @@ export class TicketsService {
   }
 
   // ============================================================
-  // 8B) MENSAJE + ARCHIVO (opcional) + updatedAt
+  // 8B) MENSAJE + ARCHIVO (opcional) + activity
   // ============================================================
   async addMessageWithAttachment(params: {
     ticketId: number;
@@ -451,6 +491,8 @@ export class TicketsService {
       );
     }
 
+    const now = new Date();
+
     const msg = await this.prisma.$transaction(async (tx) => {
       const created = await tx.ticketMessage.create({
         data: { content: content?.trim() || '', ticketId, senderId },
@@ -470,9 +512,13 @@ export class TicketsService {
         });
       }
 
+      // ✅ actividad del chat
       await tx.ticket.update({
         where: { id: ticketId },
-        data: { updatedAt: new Date() },
+        data: {
+          updatedAt: now,
+          lastActivityAt: now,
+        },
       });
 
       return tx.ticketMessage.findUnique({
@@ -503,8 +549,6 @@ export class TicketsService {
 
   // ============================================================
   // 10) LISTA PANEL (admin/super/support)
-  // - super-admin y admin: ven TODO
-  // - support: ve SOLO su área (supportArea)
   // ============================================================
   async getTicketsForPanel(currentUser?: CurrentUser) {
     if (!currentUser) return [];
@@ -540,16 +584,13 @@ export class TicketsService {
       },
     });
 
-    // ✅ CLAVE: DEVOLVER `area`
     return tickets.map((t) => ({
       id: t.id,
       subject: t.subject,
       status: t.status,
       createdAt: t.createdAt,
       updatedAt: t.updatedAt,
-
-      area: t.area, // 🔥 ESTA LÍNEA ARREGLA TODO
-
+      area: t.area,
       requesterName: t.createdBy?.name ?? null,
       clientCargo: t.createdBy?.cargo ?? null,
       clientArea: t.createdBy?.clientArea ?? null,
@@ -571,9 +612,14 @@ export class TicketsService {
 
     if (t.assignedToId) return t;
 
+    const now = new Date();
+
     return this.prisma.ticket.update({
       where: { id: ticketId },
-      data: { assignedToId: user.id },
+      data: {
+        assignedToId: user.id,
+        lastActivityAt: now,
+      },
     });
   }
 
@@ -595,15 +641,93 @@ export class TicketsService {
     }
 
     const next: any = {};
+    const now = new Date();
+
     if (!t.assignedToId) next.assignedToId = user.id;
-    if (t.status === TicketStatus.PENDING)
+
+    if (t.status === TicketStatus.PENDING) {
       next.status = TicketStatus.IN_PROGRESS;
+      next.lastActivityAt = now;
+    }
 
     if (Object.keys(next).length === 0) return t;
 
     return this.prisma.ticket.update({
       where: { id: ticketId },
       data: next,
+    });
+  }
+
+  // ============================================================
+  // ✅ SATISFACCIÓN (⭐ 1..5 + comentario)
+  // ============================================================
+  async submitSatisfaction(
+    ticketId: number,
+    user: { id: number; roles?: string[] },
+    dto: TicketSatisfactionDto,
+  ) {
+    const roles = Array.isArray(user.roles) ? user.roles : [];
+    const isAdmin = roles.includes('super-admin') || roles.includes('admin');
+
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id: ticketId },
+      select: {
+        id: true,
+        status: true,
+        createdById: true,
+        satisfaction: { select: { id: true } },
+      },
+    });
+
+    if (!ticket) throw new NotFoundException('Ticket no encontrado');
+
+    const isOwner = ticket.createdById === user.id;
+
+    if (!isOwner && !isAdmin) throw new ForbiddenException('No autorizado');
+
+    if (ticket.status !== TicketStatus.CLOSED) {
+      throw new BadRequestException('Solo puedes calificar un ticket cerrado');
+    }
+
+    if (ticket.satisfaction) {
+      throw new BadRequestException('Este ticket ya fue calificado');
+    }
+
+    return this.prisma.ticketSatisfaction.create({
+      data: {
+        ticketId,
+        rating: dto.rating,
+        comment: (dto.comment || '').trim() || null,
+      },
+      select: { id: true, rating: true, comment: true, createdAt: true },
+    });
+  }
+
+  // ============================================================
+  // (Opcional) Si DEJAS el endpoint GET /tickets/:id/satisfaction en el controller,
+  // entonces necesitas este método también.
+  // Si vas full Opción A, puedes borrarlo del controller y también este método.
+  // ============================================================
+  async getSatisfaction(
+    ticketId: number,
+    user: { id: number; roles?: string[] },
+  ) {
+    const roles = Array.isArray(user.roles) ? user.roles : [];
+    const isAdmin = roles.includes('super-admin') || roles.includes('admin');
+
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id: ticketId },
+      select: { id: true, createdById: true },
+    });
+
+    if (!ticket) throw new NotFoundException('Ticket no encontrado');
+
+    const isOwner = ticket.createdById === user.id;
+    if (!isOwner && !isAdmin) throw new ForbiddenException('No autorizado');
+
+    return this.prisma.ticketSatisfaction.findUnique({
+      where: { ticketId },
+      select: { rating: true, comment: true, createdAt: true },
     });
   }
 }

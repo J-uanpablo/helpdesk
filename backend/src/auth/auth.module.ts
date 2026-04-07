@@ -12,7 +12,7 @@ import { JwtStrategy } from './jwt.strategy';
       secret: process.env.JWT_SECRET || 'default_secret',
       signOptions: {
         // Para simplificar, hardcodeamos la duración
-        expiresIn: '1h',
+        expiresIn: '8h',
       },
     }),
   ],

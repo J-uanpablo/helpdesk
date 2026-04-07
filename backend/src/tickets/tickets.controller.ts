@@ -23,6 +23,7 @@ import { TicketsService } from './tickets.service';
 import { FilesService } from '../files/files.service';
 import { multerMemoryOptions } from '../files/multer.config';
 import { TicketsGateway } from './tickets.gateway';
+import { TicketSatisfactionDto } from './dto/ticket-satisfaction.dto';
 
 type CurrentUser = { id: number; roles?: string[] };
 
@@ -60,12 +61,9 @@ export class TicketsController {
     // ✅ Sin adjuntos
     if (!files || files.length === 0) {
       const created = await this.ticketsService.create(body, user.id);
+      if (!created) throw new Error('No se pudo crear el ticket');
 
-      if (!created) {
-        // si tu service devuelve null, algo falló o no creó el ticket
-        throw new Error('No se pudo crear el ticket');
-      }
-
+      // 🔔 Notificar a agentes/admin (por área si existe)
       this.ticketsGateway.emitNewTicket(created);
       return created;
     }
@@ -80,15 +78,9 @@ export class TicketsController {
       user.id,
       saved,
     );
-    if (created) {
-      this.ticketsGateway.emitNewTicket(created);
-    }
+    if (!created) throw new Error('No se pudo crear el ticket con adjuntos');
 
-    if (!created) {
-      throw new Error('No se pudo crear el ticket con adjuntos');
-    }
-
-    // 🔔 Notificar a agentes/admin (por área si existe)
+    // 🔔 Notificar a agentes/admin (por área si existe) -> SOLO 1 vez
     this.ticketsGateway.emitNewTicket(created);
 
     return created;
@@ -114,6 +106,7 @@ export class TicketsController {
 
   /**
    * GET /tickets/:id
+   * ✅ Opción A: aquí debe venir "satisfaction" incluido desde el service
    */
   @Get(':id')
   async findOne(@Param('id', ParseIntPipe) id: number) {
@@ -124,12 +117,7 @@ export class TicketsController {
    * GET /tickets/:id/messages
    */
   @Get(':id/messages')
-  async getMessages(
-    @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request,
-  ) {
-    // si luego quieres validar permisos por usuario, aquí tienes el user:
-    // const user = this.getCurrentUser(req);
+  async getMessages(@Param('id', ParseIntPipe) id: number) {
     return this.ticketsService.getMessages(id);
   }
 
@@ -180,7 +168,23 @@ export class TicketsController {
     @Req() req: Request,
   ) {
     const user = this.getCurrentUser(req);
-    return this.ticketsService.updateStatus(id, body.status, user, body.note);
+
+    const updated = await this.ticketsService.updateStatus(
+      id,
+      body.status,
+      user,
+      body.note,
+    );
+
+    // ✅ WS: notificar a todos los clientes del ticket + panel
+    this.ticketsGateway.emitTicketStatusChanged({
+      ticketId: id,
+      status: updated.status,
+      reason: 'MANUAL',
+      changedAt: new Date().toISOString(),
+    });
+
+    return updated;
   }
 
   /**
@@ -194,6 +198,7 @@ export class TicketsController {
 
   /**
    * PATCH /tickets/:id/open
+   * (auto-asigna + PENDING => IN_PROGRESS)
    */
   @Patch(':id/open')
   async openForAgent(
@@ -201,6 +206,36 @@ export class TicketsController {
     @Req() req: Request,
   ) {
     const user = this.getCurrentUser(req);
-    return this.ticketsService.openForAgent(id, user);
+    const updated = await this.ticketsService.openForAgent(id, user);
+
+    // ✅ opcional: si cambia estado, avisar por WS
+    if (updated?.status) {
+      this.ticketsGateway.emitTicketStatusChanged({
+        ticketId: id,
+        status: updated.status,
+        reason: 'MANUAL',
+        changedAt: new Date().toISOString(),
+      });
+    }
+
+    return updated;
+  }
+
+  // =========================================================
+  // ✅ SATISFACCIÓN (⭐ 1..5 + comentario opcional)
+  // =========================================================
+
+  /**
+   * POST /tickets/:id/satisfaction
+   * body: { rating: 1..5, comment?: string }
+   */
+  @Post(':id/satisfaction')
+  async submitSatisfaction(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: TicketSatisfactionDto,
+    @Req() req: Request,
+  ) {
+    const user = this.getCurrentUser(req);
+    return this.ticketsService.submitSatisfaction(id, user, body);
   }
 }

@@ -4,16 +4,59 @@
 
 :root {
   color-scheme: dark;
+
+  --bg-main: #050b1a;
+  --bg-panel: rgba(2, 6, 23, 0.75);
+  --bg-soft: rgba(15, 23, 42, 0.7);
+  --border-main: rgba(51, 65, 85, 0.8);
+  --text-main: #f8fafc;
+  --text-soft: #94a3b8;
+  --text-muted: #64748b;
+}
+
+.theme-dark {
+  --bg-main: #050b1a;
+  --bg-panel: rgba(2, 6, 23, 0.85);
+  --bg-soft: rgba(30, 41, 59, 0.75);
+  --border-main: rgba(51, 65, 85, 0.9);
+  --text-main: #f8fafc;
+  --text-soft: #94a3b8;
+  --text-muted: #64748b;
+
+  --input-bg: #020617;
+  --ticket-selected-bg: rgba(16, 185, 129, 0.08);
+  --ticket-unassigned-bg: rgba(245, 158, 11, 0.08);
+  --message-other-bg: #0f172a;
+}
+
+.theme-light {
+  --bg-main: #f8fafc;
+  --bg-panel: #ffffff;
+  --bg-soft: #f8fafc;
+  --border-main: #dbe4ee;
+  --text-main: #0f172a;
+  --text-soft: #475569;
+  --text-muted: #64748b;
+
+  --input-bg: #ffffff;
+  --ticket-selected-bg: rgba(16, 185, 129, 0.1);
+  --ticket-unassigned-bg: rgba(245, 158, 11, 0.1);
+  --message-other-bg: #ffffff;
+}
+
+html,
+body,
+#app {
+  height: 100%;
 }
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  background-color: #020617; /* slate-950 */
-  color: #e5e7eb; /* slate-200 */
+  overflow: hidden;
+  background: var(--bg-main);
+  color: var(--text-main);
 }
 
 #app {
-  min-height: 100vh;
+  overflow: hidden;
 }

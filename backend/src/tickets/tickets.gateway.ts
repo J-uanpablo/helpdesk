@@ -50,17 +50,16 @@ export class TicketsGateway
   }
 
   private isClientRole(roles: string[]) {
-    // Ajusta según tu proyecto
     return roles.includes('client') || roles.includes('cliente');
   }
 
   private isAgentRole(roles: string[]) {
-    // Ajusta según tu proyecto
     return (
       roles.includes('agent') ||
       roles.includes('agente') ||
       roles.includes('admin') ||
-      roles.includes('super-admin')
+      roles.includes('super-admin') ||
+      roles.includes('support')
     );
   }
 
@@ -73,7 +72,7 @@ export class TicketsGateway
       const ticketIdRaw = client.handshake.auth?.ticketId;
       const ticketId = Number(ticketIdRaw);
 
-      // áreas opcionales enviadas por el FRONT del panel (recomendado)
+      // áreas opcionales enviadas por el FRONT del panel
       const areasFromClient = client.handshake.auth?.areas as
         | string[]
         | undefined;
@@ -154,7 +153,7 @@ export class TicketsGateway
 
     const room = `ticket_${ticketId}`;
 
-    // Guardar en BD
+    // Guardar en BD (aquí ya actualizas lastActivityAt en tu service)
     const msg = await this.ticketsService.addMessage({
       ticketId,
       content: data.content,
@@ -164,14 +163,17 @@ export class TicketsGateway
     // Emitir a TODOS los conectados al ticket
     this.server.to(room).emit('ticket_message', msg);
 
+    // (Opcional) notificar que hubo actividad (sirve para listas)
+    this.server.to('agents').emit('ticket_activity', { ticketId });
+
     return msg;
   }
 
   /* ===========================
-     🔔 NEW TICKET (lo que faltaba)
-     Emitimos SOLO a area:XXX si existe
-     Si NO hay área => emitimos a "agents"
-     (Así evitas doble evento/sonido)
+     🔔 NEW TICKET (CORREGIDO)
+     - Si hay área => solo a room area:XXX
+     - Si NO hay área => a "agents"
+     (evita doble emit)
   ============================ */
   emitNewTicket(ticket: {
     id: number;
@@ -179,13 +181,6 @@ export class TicketsGateway
     area?: string | null;
     createdAt?: any;
   }) {
-    this.server.to('agents').emit('new_ticket', ticket);
-
-    const area = (ticket.area || '').trim();
-    if (area) {
-      this.server.to(`area:${area}`).emit('new_ticket', ticket);
-    }
-
     const payload = {
       id: ticket.id,
       subject: ticket.subject ?? null,
@@ -193,11 +188,39 @@ export class TicketsGateway
       createdAt: ticket.createdAt ?? null,
     };
 
-    if (payload.area) {
-      this.server.to(`area:${payload.area}`).emit('new_ticket', payload);
-      return;
-    }
+    const area = (payload.area || '').trim();
 
-    this.server.to('agents').emit('new_ticket', payload);
+    if (area) {
+      this.server.to(`area:${area}`).emit('new_ticket', payload);
+    } else {
+      this.server.to('agents').emit('new_ticket', payload);
+    }
+  }
+
+  /* ===========================
+     ✅ CAMBIO DE ESTADO (manual o auto)
+     Esto es CLAVE para el auto-cierre
+  ============================ */
+  emitTicketStatusChanged(params: {
+    ticketId: number;
+    status: string;
+    reason?: 'MANUAL' | 'AUTO_CLOSE';
+    changedAt?: string;
+  }) {
+    const ticketId = Number(params.ticketId);
+    if (!ticketId) return;
+
+    const payload = {
+      ticketId,
+      status: String(params.status),
+      reason: params.reason ?? 'MANUAL',
+      changedAt: params.changedAt ?? new Date().toISOString(),
+    };
+
+    // ✅ chat del ticket abierto
+    this.server.to(`ticket_${ticketId}`).emit('ticket_status_changed', payload);
+
+    // ✅ opcional: panel/listas
+    this.server.to('agents').emit('ticket_status_changed', payload);
   }
 }

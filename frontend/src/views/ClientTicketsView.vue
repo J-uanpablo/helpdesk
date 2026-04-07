@@ -3,6 +3,8 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuth } from '../composables/useAuth';
+import SettingsModal from '../components/settings/SettingsModal.vue';
+import { apiFetch } from '../lib/api';
 
 interface ClientTicket {
   id: number;
@@ -11,7 +13,6 @@ interface ClientTicket {
   createdAt?: string;
   updatedAt?: string;
   area?: string | null;
-
   assignedToId?: number | null;
   assignedToName?: string | null;
 }
@@ -33,6 +34,11 @@ function doLogout() {
   router.push('/login');
 }
 
+/* ===========================
+   SETTINGS MODAL
+=========================== */
+const openSettings = ref(false);
+
 const tickets = ref<ClientTicket[]>([]);
 const isLoading = ref(false);
 const error = ref<string | null>(null);
@@ -50,9 +56,9 @@ type StatusFilterValue = 'ALL' | 'PENDING' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSE
 const statusFilter = ref<StatusFilterValue>('ALL');
 
 /* ===========================
-   ✅ NUEVO: FILTRO ÁREA (CLIENTE)
+   FILTRO ÁREA (CLIENTE)
 =========================== */
-const areaFilter = ref<string>('ALL'); // guardamos el nombre del área
+const areaFilter = ref<string>('ALL');
 
 const availableAreas = computed(() => {
   const set = new Set<string>();
@@ -65,12 +71,6 @@ const availableAreas = computed(() => {
   return Array.from(set).sort((a, b) => a.localeCompare(b, 'es-CO', { sensitivity: 'base' }));
 });
 
-/* ✅ Si cambias status, opcionalmente puedes resetear área (NO obligatorio)
-watch(() => statusFilter.value, () => {
-  areaFilter.value = "ALL";
-});
-*/
-
 function formatDate(value?: string) {
   if (!value) return '';
   const d = new Date(value);
@@ -81,7 +81,7 @@ function formatDate(value?: string) {
 }
 
 /* ===========================
-   ✅ FILTRADO: STATUS + ÁREA
+   FILTRADO: STATUS + ÁREA
 =========================== */
 const filteredTickets = computed(() => {
   let list = [...tickets.value];
@@ -110,7 +110,6 @@ const inProgressCount = computed(
 );
 const resolvedCount = computed(() => tickets.value.filter(t => t.status === 'RESOLVED').length);
 const closedCount = computed(() => tickets.value.filter(t => t.status === 'CLOSED').length);
-
 const filteredCount = computed(() => filteredTickets.value.length);
 
 async function loadMyTickets() {
@@ -124,20 +123,15 @@ async function loadMyTickets() {
 
   isLoading.value = true;
   try {
-    const res = await fetch('http://localhost:3000/tickets/my', {
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-      },
-    });
+    const res = await apiFetch('http://localhost:3000/tickets/my');
 
     if (!res.ok) {
       throw new Error(`Error ${res.status} al cargar tus tickets`);
     }
 
     const data = await res.json();
-    tickets.value = data;
+    tickets.value = Array.isArray(data) ? data : [];
 
-    // ✅ Si el área seleccionada ya no existe en la lista, resetea
     if (areaFilter.value !== 'ALL' && !availableAreas.value.includes(areaFilter.value)) {
       areaFilter.value = 'ALL';
     }
@@ -159,68 +153,32 @@ function openChat(ticketId: number) {
 
 onMounted(() => {
   initAuth();
+
+  if (!(token.value ?? '').trim()) {
+    router.push({ name: 'login' });
+    return;
+  }
+
   loadMyTickets();
 });
 </script>
 
 <template>
-  <main class="min-h-screen bg-[#050b1a] text-white flex flex-col">
-    <!-- Header -->
-    <header
-      class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 px-6 py-4 border-b border-slate-800"
-    >
-      <div>
-        <h1 class="text-2xl md:text-3xl font-bold">Mis tickets de ayuda</h1>
-        <p class="text-xs text-slate-400">
-          Consulta el estado de tus solicitudes y abre el chat con soporte.
-        </p>
-      </div>
-
-      <div class="flex flex-col items-end gap-1 text-right">
-        <p class="text-[11px] text-slate-300">
-          Sesión:
-          <span class="font-semibold">
-            {{ user?.name || 'Usuario autenticado' }}
-          </span>
-        </p>
-        <p v-if="user?.email" class="text-[10px] text-slate-500">
-          {{ user.email }}
-        </p>
-
-        <div class="flex gap-2 mt-1">
-          <button
-            type="button"
-            @click="loadMyTickets"
-            class="h-8 px-3 rounded-md bg-emerald-500 hover:bg-emerald-600 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-            :disabled="isLoading || !token"
-          >
-            {{ isLoading ? 'Actualizando...' : 'Actualizar lista' }}
-          </button>
-
-          <button
-            type="button"
-            @click="goToNewTicket"
-            class="h-8 px-3 rounded-md bg-sky-500 hover:bg-sky-600 text-xs font-semibold"
-          >
-            Nuevo ticket
-          </button>
-
-          <button
-            @click="confirmLogout"
-            class="px-3 py-1 rounded-md bg-red-500 hover:bg-red-600 text-xs font-semibold text-white"
-          >
-            Cerrar sesión
-          </button>
-        </div>
-
-        <p v-if="error" class="text-[11px] text-rose-400 mt-1">
-          {{ error }}
-        </p>
-      </div>
-    </header>
-
+  <main
+    class="min-h-screen flex flex-col"
+    :style="{
+      background: 'var(--bg-main)',
+      color: 'var(--text-main)',
+    }"
+  >
     <!-- Filtros -->
-    <section class="px-6 pt-4 pb-3 border-b border-slate-800 bg-[#050b1a]">
+    <section
+      class="px-6 pt-4 pb-3 border-b"
+      :style="{
+        borderColor: 'var(--border-main)',
+        background: 'var(--bg-main)',
+      }"
+    >
       <div class="flex flex-col gap-2">
         <!-- Status pills -->
         <div class="flex flex-wrap gap-2">
@@ -229,30 +187,43 @@ onMounted(() => {
             :key="f.value"
             type="button"
             class="px-3 py-1 rounded-full border text-xs font-semibold transition-colors"
-            :class="
+            :style="
               statusFilter === f.value
-                ? 'bg-emerald-500 text-white border-emerald-500'
-                : 'bg-transparent text-slate-300 border-slate-600 hover:bg-slate-800/60'
+                ? {
+                    background: '#10b981',
+                    color: '#ffffff',
+                    borderColor: '#10b981',
+                  }
+                : {
+                    background: 'transparent',
+                    color: 'var(--text-soft)',
+                    borderColor: 'var(--border-main)',
+                  }
             "
             @click="statusFilter = f.value"
           >
-            <template v-if="f.value === 'ALL'"> Todos ({{ totalTickets }}) </template>
-            <template v-else-if="f.value === 'PENDING'"> Abiertos ({{ openCount }}) </template>
+            <template v-if="f.value === 'ALL'">Todos ({{ totalTickets }})</template>
+            <template v-else-if="f.value === 'PENDING'">Abiertos ({{ openCount }})</template>
             <template v-else-if="f.value === 'IN_PROGRESS'">
               En progreso ({{ inProgressCount }})
             </template>
             <template v-else-if="f.value === 'RESOLVED'">
               Resueltos ({{ resolvedCount }})
             </template>
-            <template v-else-if="f.value === 'CLOSED'"> Cerrados ({{ closedCount }}) </template>
+            <template v-else-if="f.value === 'CLOSED'">Cerrados ({{ closedCount }})</template>
           </button>
         </div>
 
-        <!-- ✅ NUEVO: select de áreas -->
-        <div class="flex flex-col md:flex-row md:items-center gap-2">
+        <!-- Select de áreas -->
+        <div class="flex flex-col gap-2 md:flex-row md:items-center">
           <select
             v-model="areaFilter"
-            class="w-full md:w-[320px] bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            class="w-full md:w-[320px] rounded-md px-3 py-2 text-sm border focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            :style="{
+              background: 'var(--input-bg)',
+              borderColor: 'var(--border-main)',
+              color: 'var(--text-main)',
+            }"
           >
             <option value="ALL">Todas las áreas</option>
             <option v-for="a in availableAreas" :key="a" :value="a">
@@ -260,7 +231,7 @@ onMounted(() => {
             </option>
           </select>
 
-          <p class="text-[11px] text-slate-400">
+          <p class="text-[11px]" :style="{ color: 'var(--text-soft)' }">
             {{ filteredCount }} de {{ totalTickets }} tickets mostrados.
           </p>
         </div>
@@ -270,7 +241,7 @@ onMounted(() => {
     <!-- Lista de tickets -->
     <section class="flex-1 px-6 py-4 space-y-3">
       <div v-if="filteredTickets.length === 0 && !isLoading" class="mt-6">
-        <p class="text-sm text-slate-400">
+        <p class="text-sm" :style="{ color: 'var(--text-soft)' }">
           No tienes tickets que coincidan con los filtros seleccionados.
         </p>
       </div>
@@ -278,44 +249,67 @@ onMounted(() => {
       <article
         v-for="t in filteredTickets"
         :key="t.id"
-        class="border border-slate-800 rounded-lg bg-slate-950/80 px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
+        class="border rounded-lg px-4 py-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between transition"
+        :style="{
+          borderColor: 'var(--border-main)',
+          background: 'var(--bg-panel)',
+        }"
       >
-        <div class="space-y-1">
-          <h2 class="text-sm md:text-base font-semibold">
+        <div class="space-y-1 min-w-0">
+          <h2 class="text-sm md:text-base font-semibold break-words">
             #{{ t.id }} — {{ t.subject || 'Sin asunto' }}
           </h2>
 
-          <p class="text-[11px] text-slate-400">
+          <p class="text-[11px]" :style="{ color: 'var(--text-soft)' }">
             Área:
-            <span class="text-slate-200">
+            <span :style="{ color: 'var(--text-main)' }">
               {{ t.area || 'Sin área asignada' }}
             </span>
           </p>
 
-          <p class="text-[11px] text-slate-400">
+          <p class="text-[11px]" :style="{ color: 'var(--text-soft)' }">
             Atendido por:
-            <span class="text-slate-200 font-semibold">
+            <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
               {{ t.assignedToName ? t.assignedToName : 'Sin asignar' }}
             </span>
           </p>
 
-          <p class="text-[11px] text-slate-500">
+          <p class="text-[11px]" :style="{ color: 'var(--text-muted)' }">
             Última actualización:
-            <span class="text-slate-300">
+            <span :style="{ color: 'var(--text-soft)' }">
               {{ formatDate(t.updatedAt || t.createdAt) }}
             </span>
           </p>
         </div>
 
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-3 shrink-0">
           <span
             class="inline-flex items-center px-3 py-1 rounded-full border text-[11px] font-semibold"
-            :class="{
-              'border-emerald-500 text-emerald-300': t.status === 'PENDING',
-              'border-amber-400 text-amber-300': t.status === 'IN_PROGRESS',
-              'border-sky-400 text-sky-300': t.status === 'RESOLVED',
-              'border-slate-500 text-slate-300': !t.status || t.status === 'CLOSED',
-            }"
+            :style="
+              t.status === 'PENDING'
+                ? {
+                    borderColor: '#10b981',
+                    color: '#10b981',
+                    background: 'rgba(16,185,129,0.08)',
+                  }
+                : t.status === 'IN_PROGRESS'
+                ? {
+                    borderColor: '#f59e0b',
+                    color: '#d97706',
+                    background: 'rgba(245,158,11,0.08)',
+                  }
+                : t.status === 'RESOLVED'
+                ? {
+                    borderColor: '#0ea5e9',
+                    color: '#0284c7',
+                    background: 'rgba(14,165,233,0.08)',
+                  }
+                : {
+                    borderColor: 'var(--border-main)',
+                    color: 'var(--text-soft)',
+                    background: 'transparent',
+                  }
+            "
           >
             {{
               t.status === 'PENDING'
@@ -332,7 +326,7 @@ onMounted(() => {
 
           <button
             type="button"
-            class="px-4 py-2 rounded-md bg-emerald-500 hover:bg-emerald-600 text-xs font-semibold"
+            class="px-4 py-2 rounded-md bg-emerald-500 hover:bg-emerald-600 text-xs font-semibold text-white"
             @click="openChat(t.id)"
           >
             Abrir chat
@@ -341,26 +335,49 @@ onMounted(() => {
       </article>
     </section>
 
-    <!-- 🔴 Modal de confirmación para cerrar sesión -->
+    <!-- Settings Modal -->
+    <SettingsModal
+      v-if="openSettings"
+      :authToken="(token || '').trim()"
+      @close="openSettings = false"
+    />
+
+    <!-- Modal de confirmación para cerrar sesión -->
     <div
       v-if="showLogoutModal"
       class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
     >
-      <div class="bg-slate-900 border border-slate-700 rounded-lg p-6 w-full max-w-sm shadow-xl">
-        <h2 class="text-lg font-semibold text-white mb-2">¿Cerrar sesión?</h2>
-        <p class="text-sm text-slate-300 mb-4">¿Estás seguro de que deseas cerrar sesión?</p>
+      <div
+        class="w-full max-w-sm rounded-lg p-6 shadow-xl border"
+        :style="{
+          background: 'var(--bg-panel)',
+          borderColor: 'var(--border-main)',
+        }"
+      >
+        <h2 class="text-lg font-semibold mb-2" :style="{ color: 'var(--text-main)' }">
+          ¿Cerrar sesión?
+        </h2>
+
+        <p class="text-sm mb-4" :style="{ color: 'var(--text-soft)' }">
+          ¿Estás seguro de que deseas cerrar sesión?
+        </p>
 
         <div class="flex justify-end gap-3">
           <button
             @click="cancelLogout"
-            class="px-3 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-sm"
+            class="px-3 py-1 rounded-md text-sm border"
+            :style="{
+              background: 'var(--bg-soft)',
+              borderColor: 'var(--border-main)',
+              color: 'var(--text-main)',
+            }"
           >
             Cancelar
           </button>
 
           <button
             @click="doLogout"
-            class="px-3 py-1 rounded-md bg-red-500 hover:bg-red-600 text-sm font-semibold"
+            class="px-3 py-1 rounded-md bg-red-500 hover:bg-red-600 text-sm font-semibold text-white"
           >
             Sí, cerrar sesión
           </button>

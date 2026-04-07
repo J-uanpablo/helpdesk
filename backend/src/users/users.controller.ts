@@ -2,8 +2,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   UseGuards,
@@ -33,18 +35,28 @@ export class UsersController {
     return this.usersService.listAgentsAndAdmins();
   }
 
-  // Crear agente / admin
+  // Crear agente / admin / super-admin
   @Post('agents')
   @Roles('admin', 'super-admin')
   createAgent(@Body() dto: CreateAgentDto) {
     return this.usersService.createAgent(dto);
   }
 
-  // Actualizar agente / admin
+  // Actualizar agente / admin / super-admin
   @Patch('agents/:id')
   @Roles('admin', 'super-admin')
-  updateAgent(@Param('id') id: string, @Body() dto: UpdateAgentDto) {
-    return this.usersService.updateAgent(Number(id), dto);
+  updateAgent(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateAgentDto,
+  ) {
+    return this.usersService.updateAgent(id, dto);
+  }
+
+  // ✅ Eliminar agente (recomendado: soft delete / desactivar)
+  @Delete('agents/:id')
+  @Roles('admin', 'super-admin')
+  deleteAgent(@Param('id', ParseIntPipe) id: number) {
+    return this.usersService.deleteAgent(id);
   }
 
   // ============================================================
@@ -54,21 +66,31 @@ export class UsersController {
   // Listar clientes
   @Get('clients')
   @Roles('super-admin')
-  async listClients() {
+  listClients() {
     return this.usersService.listClients();
   }
 
   // Crear cliente
   @Post('clients')
   @Roles('super-admin')
-  async createClient(@Body() dto: CreateClientDto) {
+  createClient(@Body() dto: CreateClientDto) {
     return this.usersService.createClient(dto);
   }
 
   // Actualizar cliente
   @Patch('clients/:id')
   @Roles('super-admin')
-  async updateClient(@Param('id') id: string, @Body() dto: UpdateClientDto) {
-    return this.usersService.updateClient(Number(id), dto);
+  updateClient(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateClientDto,
+  ) {
+    return this.usersService.updateClient(id, dto);
+  }
+
+  // (Opcional) ✅ Eliminar cliente (soft delete / desactivar)
+  @Delete('clients/:id')
+  @Roles('super-admin')
+  deleteClient(@Param('id', ParseIntPipe) id: number) {
+    return this.usersService.deleteClient(id);
   }
 }

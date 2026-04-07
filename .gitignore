@@ -1,11 +1,56 @@
-node_modules
-dist
-build
+# =========================
+# Node / Build
+# =========================
+node_modules/
+dist/
+build/
+
+# =========================
+# ENV (CRÍTICO 🔐)
+# =========================
 .env
 .env.*
-.vscode
+!.env.example
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =========================
+# OS
+# =========================
 .DS_Store
-uploads
-# Vite cache
+Thumbs.db
+
+# =========================
+# Editor
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# Uploads (MUY IMPORTANTE 📎)
+# =========================
+uploads/
+backend/uploads/
+
+# =========================
+# Vite / Frontend cache
+# =========================
 frontend/.vite
 **/.vite
+
+# =========================
+# Prisma / DB local
+# =========================
+prisma/dev.db
+
+# =========================
+# Coverage / testing
+# =========================
+coverage/

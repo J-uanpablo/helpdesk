@@ -1,10 +1,36 @@
 // src/users/dto/create-agent.dto.ts
+import {
+  IsBoolean,
+  IsEmail,
+  IsIn,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
+
 export class CreateAgentDto {
+  @IsString()
   name: string;
+
+  @IsEmail()
   email: string;
-  password: string; // contraseña temporal
-  // 'support' para agente, 'admin' para administrador de área
-  role: 'support' | 'admin';
-  // área de soporte (obligatoria para support, opcional para admin)
+
+  @IsOptional()
+  @IsString()
+  cargo?: string | null;
+
+  @IsString()
+  @MinLength(6)
+  password: string;
+
+  @IsIn(['support', 'admin', 'super-admin'])
+  role: 'support' | 'admin' | 'super-admin';
+
+  @IsOptional()
+  @IsString()
   supportArea?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

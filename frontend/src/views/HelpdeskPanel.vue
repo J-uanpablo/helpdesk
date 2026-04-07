@@ -5,11 +5,89 @@ import { useRouter } from 'vue-router';
 import { useTicketChat } from '../composables/useTicketChat';
 import { useAuth } from '../composables/useAuth';
 import { io, Socket } from 'socket.io-client';
+import SettingsModal from '../components/settings/SettingsModal.vue';
+import { apiFetch } from '../lib/api';
+// ===========================
+// REPORTES (Excel)
+// ===========================
+const reportFrom = ref('');
+const reportTo = ref('');
+const reportArea = ref<string>('ALL'); // ✅ solo super-admin
+const showReportModal = ref(false);
+
+const reportAreas = computed(() => {
+  // ✅ reutiliza tu lista de áreas (supportAreas) si ya la cargas
+  // si no existe supportAreas en tu script, dímelo y lo adaptamos a areasFilter/availableAreas
+  return (supportAreas.value || []).map(a => a.name);
+});
+// const inputStyle = {
+//   background: 'var(--bg-soft)',
+//   border: '1px solid var(--border-main)',
+//   color: 'var(--text-main)',
+// };
+
+// function getStatusColor(status) {
+//   if (status === 'PENDING') return '#10b981';
+//   if (status === 'IN_PROGRESS') return '#f59e0b';
+//   if (status === 'RESOLVED') return '#0ea5e9';
+//   return '#64748b';
+// }
+async function downloadSupportReport() {
+  const jwt = (token.value ?? '').trim();
+  if (!jwt) return;
+
+  if (!reportFrom.value || !reportTo.value) {
+    alert('Selecciona desde y hasta');
+    return;
+  }
+
+  const params = new URLSearchParams({
+    from: reportFrom.value,
+    to: reportTo.value,
+  });
+
+  // ✅ Si es super-admin puede filtrar área opcional
+  if (isSuperAdmin.value && reportArea.value !== 'ALL') {
+    params.set('area', reportArea.value);
+  }
+
+  const url = `http://localhost:3000/reports/support-performance.xlsx?${params.toString()}`;
+
+  const res = await apiFetch(url);
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    alert(`Error ${res.status} descargando reporte.\n${txt}`);
+    return;
+  }
+
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+
+  const areaPart =
+    isSuperAdmin.value && reportArea.value !== 'ALL'
+      ? `_${reportArea.value.replace(/\s+/g, '_')}`
+      : '_todas';
+
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = `reporte_soporte${areaPart}_${reportFrom.value}_a_${reportTo.value}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  URL.revokeObjectURL(objectUrl);
+  showReportModal.value = false;
+}
 
 /* ===========================
    0) CONFIG
 =========================== */
 const API_BASE = 'http://localhost:3000';
+
+function getJwt(): string {
+  return (token.value ?? '').trim();
+}
 
 /* ===========================
    1) MODAL LOGOUT
@@ -21,22 +99,19 @@ function confirmLogout() {
 function cancelLogout() {
   showLogoutModal.value = false;
 }
+/* ===========================
+   RESPONDER CON PLANTILLA (botón antiguo)
+=========================== */
+function insertTemplate(text: string) {
+  // inserta en el input (al final)
+  newMessage.value = (newMessage.value ? newMessage.value + '\n' : '') + text;
+}
 
 /* ===========================
    2) ROUTER + AUTH
 =========================== */
 const router = useRouter();
-const { token, user, initAuth, logout } = useAuth();
-
-function doLogout() {
-  showLogoutModal.value = false;
-  logout();
-  router.push('/login');
-}
-
-function goToClientsAdmin() {
-  router.push({ name: 'AdminClients' });
-}
+const { token, user, initAuth } = useAuth();
 
 const isSuperAdmin = computed(() => (user.value?.roles || []).includes('super-admin'));
 const isAdmin = computed(() => {
@@ -91,7 +166,7 @@ function disconnectPanelSocket() {
 }
 
 function connectPanelSocket() {
-  const jwt = (token.value ?? '').trim();
+  const jwt = getJwt();
   if (!jwt) return;
 
   disconnectPanelSocket();
@@ -135,6 +210,21 @@ const STATUS_FILTERS = [
 ] as const;
 
 type StatusFilterValue = 'ALL' | 'PENDING' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+
+function getStatusLabel(status?: string | null) {
+  switch (status) {
+    case 'PENDING':
+      return 'ABIERTO';
+    case 'IN_PROGRESS':
+      return 'EN PROGRESO';
+    case 'RESOLVED':
+      return 'RESUELTO';
+    case 'CLOSED':
+      return 'CERRADO';
+    default:
+      return 'SIN ESTADO';
+  }
+}
 
 /* ===========================
    6) TIPOS
@@ -248,22 +338,16 @@ async function loadSupportAreas() {
     return;
   }
 
-  const jwt = (token.value ?? '').trim();
+  const jwt = getJwt();
   if (!jwt) {
     supportAreas.value = [];
     return;
   }
 
   try {
-    const res = await fetch(`${API_BASE}/support-areas`, {
+    const res = await apiFetch(`${API_BASE}/support-areas`, {
       method: 'GET',
-      headers: { Authorization: `Bearer ${jwt}` },
     });
-
-    if (res.status === 401) {
-      supportAreas.value = [];
-      return;
-    }
 
     if (!res.ok) throw new Error(`Error ${res.status} al cargar áreas`);
 
@@ -404,11 +488,140 @@ const typedMessages = computed<TicketMessage[]>(() => messages.value as TicketMe
 const newMessage = ref('');
 
 /* ==========================================================
+   8.2) QUICK REPLIES CON "/" (SUGERENCIAS EN EL INPUT)
+========================================================== */
+type QuickReply = { id: number; title: string; content: string };
+
+const quickReplies = ref<QuickReply[]>([]);
+const quickRepliesLoaded = ref(false);
+
+const showQuickReplies = ref(false);
+const quickReplyQuery = ref(''); // texto después de "/"
+const selectedReplyIndex = ref(0);
+
+function extractSlashQuery(text: string): string | null {
+  // Busca último "/" y valida que sea inicio o precedido por espacio
+  const idx = text.lastIndexOf('/');
+  if (idx < 0) return null;
+
+  const prev = idx === 0 ? ' ' : text[idx - 1];
+  const validPrev = prev === ' ' || prev === '\n' || prev === '\t';
+  if (!validPrev) return null;
+
+  // lo que viene después del /
+  return text.slice(idx + 1);
+}
+
+async function fetchQuickReplies() {
+  const jwt = getJwt();
+  if (!jwt) return;
+
+  try {
+    const res = await apiFetch(`${API_BASE}/quick-replies`);
+    if (!res.ok) return;
+
+    const data = await res.json();
+    quickReplies.value = Array.isArray(data) ? data : [];
+    quickRepliesLoaded.value = true;
+  } catch (e) {
+    // no bloquea el chat
+    console.warn('No se pudieron cargar quick replies:', e);
+  }
+}
+
+const filteredQuickReplies = computed(() => {
+  const term = (quickReplyQuery.value || '').trim().toLowerCase();
+  if (!term) return quickReplies.value;
+
+  return quickReplies.value.filter(
+    t => t.title.toLowerCase().includes(term) || t.content.toLowerCase().includes(term)
+  );
+});
+
+function closeQuickReplies() {
+  showQuickReplies.value = false;
+  quickReplyQuery.value = '';
+  selectedReplyIndex.value = 0;
+}
+
+function applyTemplate(tpl: QuickReply) {
+  // Reemplaza desde el último "/...query" hasta el final por el contenido de la plantilla
+  const text = newMessage.value || '';
+  const idx = text.lastIndexOf('/');
+  if (idx >= 0) {
+    const before = text.slice(0, idx);
+    const insert = tpl.content;
+    newMessage.value = before + insert;
+  } else {
+    newMessage.value = (newMessage.value ? newMessage.value + '\n' : '') + tpl.content;
+  }
+  closeQuickReplies();
+}
+
+function onMessageInput() {
+  // Solo habilitar si hay ticket seleccionado y no está cerrado
+  if (!selectedTicketId.value || isTicketClosed.value) {
+    closeQuickReplies();
+    return;
+  }
+
+  const q = extractSlashQuery(newMessage.value);
+  if (q === null) {
+    closeQuickReplies();
+    return;
+  }
+
+  // Si el usuario acaba de poner "/" o está escribiendo después
+  quickReplyQuery.value = q;
+  showQuickReplies.value = true;
+  selectedReplyIndex.value = 0;
+
+  // Cargar plantillas al primer uso
+  if (!quickRepliesLoaded.value) void fetchQuickReplies();
+}
+
+function onMessageKeydown(e: KeyboardEvent) {
+  if (!showQuickReplies.value) return;
+
+  const list = filteredQuickReplies.value;
+  if (!list.length) {
+    if (e.key === 'Escape') closeQuickReplies();
+    return;
+  }
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    selectedReplyIndex.value = (selectedReplyIndex.value + 1) % list.length;
+    return;
+  }
+
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    selectedReplyIndex.value = (selectedReplyIndex.value - 1 + list.length) % list.length;
+    return;
+  }
+
+  if (e.key === 'Enter') {
+    // si el dropdown está abierto, Enter selecciona plantilla
+    e.preventDefault();
+    applyTemplate(list[selectedReplyIndex.value]);
+    return;
+  }
+
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeQuickReplies();
+    return;
+  }
+}
+
+/* ==========================================================
    17) PENDING FILES + DRAG&DROP + CTRL+V
 ========================================================== */
 const pendingFiles = ref<File[]>([]);
 const isUploading = ref(false);
 const uploadError = ref<string | null>(null);
+const openSettings = ref(false);
 
 /* ===========================
    BORRADOR POR TICKET (texto persistente + adjuntos en memoria)
@@ -566,7 +779,7 @@ async function changeStatus(newStatus: string) {
     return;
   }
 
-  const jwt = (token.value ?? '').trim();
+  const jwt = getJwt();
   if (!jwt) {
     statusError.value = 'No hay token JWT para autenticar la petición.';
     return;
@@ -574,9 +787,8 @@ async function changeStatus(newStatus: string) {
 
   isUpdatingStatus.value = true;
   try {
-    const res = await fetch(`${API_BASE}/tickets/${selectedTicketId.value}/status`, {
+    const res = await apiFetch(`${API_BASE}/tickets/${selectedTicketId.value}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
       body: JSON.stringify({
         status: newStatus,
         note: 'Estado actualizado desde el panel de ayuda',
@@ -606,13 +818,12 @@ async function ensureInProgress(ticketId: number) {
   if (isAdmin.value) return;
   if (!myId.value || t.assignedToId !== myId.value) return;
 
-  const jwt = (token.value ?? '').trim();
+  const jwt = getJwt();
   if (!jwt) return;
 
   try {
-    const res = await fetch(`${API_BASE}/tickets/${ticketId}/status`, {
+    const res = await apiFetch(`${API_BASE}/tickets/${ticketId}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
       body: JSON.stringify({
         status: 'IN_PROGRESS',
         note: 'Auto: al abrir el chat',
@@ -634,7 +845,7 @@ async function ensureInProgress(ticketId: number) {
 async function loadTickets() {
   ticketsError.value = null;
 
-  const jwt = (token.value ?? '').trim();
+  const jwt = getJwt();
   if (!jwt) {
     tickets.value = [];
     isLoadingTickets.value = false;
@@ -645,16 +856,9 @@ async function loadTickets() {
   isLoadingTickets.value = true;
 
   try {
-    const res = await fetch(`${API_BASE}/tickets/panel-list`, {
+    const res = await apiFetch(`${API_BASE}/tickets/panel-list`, {
       method: 'GET',
-      headers: { Authorization: `Bearer ${jwt}` },
     });
-
-    if (res.status === 401) {
-      tickets.value = [];
-      ticketsError.value = 'Sesión vencida (401). Vuelve a iniciar sesión.';
-      return;
-    }
 
     if (!res.ok) throw new Error(`Error ${res.status} al cargar los tickets`);
 
@@ -685,7 +889,7 @@ async function loadTickets() {
    13) CONECTAR CHAT
 =========================== */
 function connectToSelected() {
-  const jwt = (token.value ?? '').trim();
+  const jwt = getJwt();
   if (!selectedTicketId.value || !jwt) return;
 
   hasInitializedMessages.value = false;
@@ -718,6 +922,8 @@ function closeChat() {
   uploadError.value = null;
   isDragging.value = false;
 
+  closeQuickReplies();
+
   try {
     chatApi?.disconnect?.();
   } catch (_) {}
@@ -742,13 +948,12 @@ async function handleSelectTicket(ticket: TicketSummary) {
 
   // Auto-assign si support (no admin) y está sin asignar
   if (!isAdmin.value && !ticket.assignedToId && myId.value) {
-    const jwt = (token.value ?? '').trim();
+    const jwt = getJwt();
     if (!jwt) return;
 
     try {
-      const res = await fetch(`${API_BASE}/tickets/${ticket.id}/assign-me`, {
+      const res = await apiFetch(`${API_BASE}/tickets/${ticket.id}/assign-me`, {
         method: 'PATCH',
-        headers: { Authorization: `Bearer ${jwt}` },
       });
 
       if (res.ok) {
@@ -942,10 +1147,6 @@ function nextImage() {
   setPreviewByIndex(next);
 }
 
-// function resetPreviewZoom() {
-//   previewScale.value = 1;
-// }
-
 function onPreviewWheel(e: WheelEvent) {
   if (!imagePreviewOpen.value) return;
   e.preventDefault();
@@ -991,7 +1192,7 @@ async function uploadFilesAndSend() {
   uploadError.value = null;
   isUploading.value = true;
 
-  const jwt = (token.value ?? '').trim();
+  const jwt = getJwt();
   if (!jwt) {
     uploadError.value = 'No hay token JWT.';
     isUploading.value = false;
@@ -1008,9 +1209,8 @@ async function uploadFilesAndSend() {
 
       fd.append('file', f);
 
-      const res = await fetch(`${API_BASE}/tickets/${selectedTicketId.value}/messages`, {
+      const res = await apiFetch(`${API_BASE}/tickets/${selectedTicketId.value}/messages`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${jwt}` },
         body: fd,
       });
 
@@ -1023,6 +1223,7 @@ async function uploadFilesAndSend() {
 
     pendingFiles.value = [];
     newMessage.value = '';
+    closeQuickReplies();
     // ✅ borrador enviado → limpiar storage
     clearDraft(selectedTicketId.value);
 
@@ -1040,6 +1241,9 @@ function handleSend() {
   if (isTicketClosed.value) return;
   if (!canSend.value) return;
 
+  // si dropdown está abierto y presionan enter, lo maneja onMessageKeydown
+  if (showQuickReplies.value) return;
+
   if (pendingFiles.value.length > 0) {
     void uploadFilesAndSend();
     return;
@@ -1052,6 +1256,7 @@ function handleSend() {
 
   sendMessage(selectedTicketId.value as number, text);
   newMessage.value = '';
+  closeQuickReplies();
 
   // ✅ al enviar texto, borrador limpio
   clearDraft(selectedTicketId.value);
@@ -1096,6 +1301,11 @@ watch(
     connectPanelSocket();
     await loadSupportAreas();
     await loadTickets();
+
+    // precarga plantillas (opcional, así el "/" abre instantáneo)
+    quickRepliesLoaded.value = false;
+    quickReplies.value = [];
+    void fetchQuickReplies();
   },
   { immediate: true }
 );
@@ -1119,14 +1329,17 @@ onMounted(async () => {
   } catch (_) {}
 
   // inicial si ya hay token
-  if ((token.value ?? '').trim()) {
+  if (getJwt()) {
     connectPanelSocket();
     await loadSupportAreas();
     await loadTickets();
+
+    // precarga quick replies
+    void fetchQuickReplies();
   }
 
   refreshId = window.setInterval(() => {
-    if ((token.value ?? '').trim()) loadTickets();
+    if (getJwt()) loadTickets();
   }, 3000);
 
   window.addEventListener('keydown', handleKeydown);
@@ -1150,687 +1363,599 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="h-screen bg-slate-900 text-slate-100 flex flex-col overflow-hidden">
-    <!-- HEADER SUPERIOR -->
-    <header class="border-b border-slate-800 bg-slate-900/95">
+  <!-- ROOT -->
+  <div
+    class="flex-1 min-h-0 flex overflow-hidden rounded-xl shadow-lg border"
+    :style="{
+      background: 'var(--bg-panel)',
+      borderColor: 'var(--border-main)',
+      color: 'var(--text-main)',
+    }"
+  >
+    <!-- ========================= COLUMNA IZQUIERDA (Tickets) ========================== -->
+    <aside
+      class="w-[500px] shrink-0 flex flex-col min-h-0 overflow-hidden border-r"
+      :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
+    >
+      <!-- Header lista -->
       <div
-        class="max-w-8xl mx-auto px-6 py-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
+        class="shrink-0 px-3 py-2 flex items-center justify-between border-b"
+        :style="{ borderColor: 'var(--border-main)' }"
       >
-        <div>
-          <h1 class="text-2xl md:text-3xl font-bold">Mesa de ayuda – Chat</h1>
-          <p class="text-xs text-slate-400">
-            Panel tipo WhatsApp: tickets a la izquierda, chat a la derecha.
-          </p>
+        <span class="text-xs font-semibold uppercase" :style="{ color: 'var(--text-soft)' }">
+          Tickets
+        </span>
+        <span
+          class="text-[11px] flex items-center gap-1"
+          :class="{
+            'text-emerald-500': isConnected,
+            'text-yellow-500': isConnecting,
+            'text-slate-500': !isConnected && !isConnecting,
+          }"
+        >
+          <span
+            class="w-2 h-2 rounded-full"
+            :class="{
+              'bg-emerald-500': isConnected,
+              'bg-yellow-500': isConnecting,
+              'bg-slate-500': !isConnected && !isConnecting,
+            }"
+          />
+          {{ isConnecting ? 'Conectando' : isConnected ? 'Conectado' : 'Desconectado' }}
+        </span>
+      </div>
+      <!-- Filtros -->
+      <div
+        class="shrink-0 px-3 py-3 text-[11px] space-y-2 border-b"
+        :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
+      >
+        <div class="flex flex-wrap gap-1.5">
+          <button
+            v-for="f in STATUS_FILTERS"
+            :key="f.value"
+            type="button"
+            class="px-3 py-1 rounded-full border font-semibold transition-colors"
+            :style="
+              statusFilter === f.value
+                ? { background: '#10b981', color: '#ffffff', borderColor: '#10b981' }
+                : {
+                    background: 'transparent',
+                    color: 'var(--text-soft)',
+                    borderColor: 'var(--border-main)',
+                  }
+            "
+            @click="statusFilter = f.value"
+          >
+            <template v-if="f.value === 'ALL'">Todos ({{ totalTickets }})</template>
+            <template v-else-if="f.value === 'PENDING'">Abiertos ({{ openCount }})</template>
+            <template v-else-if="f.value === 'IN_PROGRESS'">
+              En progreso ({{ inProgressCount }})
+            </template>
+            <template v-else-if="f.value === 'RESOLVED'">
+              Resueltos ({{ resolvedCount }})
+            </template>
+            <template v-else-if="f.value === 'CLOSED'">Cerrados ({{ closedCount }})</template>
+          </button>
         </div>
-
-        <div class="flex flex-col items-end gap-1 text-right">
-          <p class="text-[11px] text-slate-300">
-            Sesión:
-            <span class="font-semibold">{{ user?.name || 'Usuario autenticado' }}</span>
-          </p>
-          <p v-if="user?.email" class="text-[10px] text-slate-500">
-            {{ user.email }}
-          </p>
-
-          <div class="flex gap-2 mt-1">
-            <!-- Botón Admin. clientes (solo super admin) -->
-            <button
-              v-if="isSuperAdmin"
-              class="h-9 px-4 rounded-md bg-amber-500 hover:bg-amber-600 text-xs font-semibold"
-              @click="goToClientsAdmin"
+        <!-- Filtros extra SOLO para admin -->
+        <div v-if="isAdmin" class="flex flex-col gap-2 mt-1">
+          <div class="flex flex-wrap gap-2">
+            <select
+              v-model="areaFilter"
+              class="flex-1 min-w-[120px] rounded-md px-2 py-1 border focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              :style="{
+                background: 'var(--bg-soft)',
+                borderColor: 'var(--border-main)',
+                color: 'var(--text-main)',
+              }"
             >
-              Admin. clientes
-            </button>
-
-            <button
-              v-if="isSuperAdmin"
-              type="button"
-              class="h-8 px-3 rounded-md bg-sky-600 hover:bg-sky-700 text-xs font-semibold"
-              @click="router.push({ name: 'AdminAgents' })"
+              <option value="ALL">Todas las áreas</option>
+              <option v-for="a in availableAreas" :key="a" :value="a">{{ a }}</option>
+            </select>
+            <select
+              v-model="agentFilter"
+              class="flex-1 min-w-[130px] rounded-md px-2 py-1 border focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              :style="{
+                background: 'var(--bg-soft)',
+                borderColor: 'var(--border-main)',
+                color: 'var(--text-main)',
+              }"
             >
-              Admin. agentes
-            </button>
-            <button
-              v-if="isSuperAdmin || isAdmin"
-              type="button"
-              class="h-8 px-3 rounded-md bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold"
-              @click="router.push({ name: 'AdminAreas' })"
-            >
-              Admin. áreas
-            </button>
-
-            <!-- <button
-              type="button"
-              @click="loadTickets"
-              class="h-8 px-3 rounded-md bg-emerald-500 hover:bg-emerald-600 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-              :disabled="isLoadingTickets || !token"
-            >
-              {{ isLoadingTickets ? "Cargando tickets..." : "Cargar tickets" }}
-            </button> -->
-
-            <button
-              @click="confirmLogout"
-              class="px-3 py-1 rounded-md bg-red-500 hover:bg-red-600 text-xs font-semibold text-white"
-            >
-              Cerrar sesión
-            </button>
+              <option value="ALL">Todos los agentes</option>
+              <option value="UNASSIGNED">Sin asignar</option>
+              <option v-for="ag in availableAgents" :key="ag.id" :value="String(ag.id)">
+                {{ ag.name }}
+              </option>
+            </select>
           </div>
-
-          <p v-if="ticketsError" class="text-[11px] text-rose-400 mt-1">
-            {{ ticketsError }}
+          <p class="text-[11px]" :style="{ color: 'var(--text-muted)' }">
+            {{ filteredCount }} de {{ totalTickets }} tickets mostrados.
           </p>
         </div>
       </div>
-    </header>
-
-    <!-- CUERPO PRINCIPAL -->
-    <main class="flex-1 flex items-stretch px-0 pb-4 min-h-0">
-      <div
-        class="flex flex-1 w-full border border-slate-800 bg-slate-950/60 rounded-xl overflow-hidden shadow-lg min-h-0"
-      >
-        <!-- COLUMNA IZQUIERDA -->
-        <aside
-          class="w-[500px] shrink-0 border-r border-slate-800 bg-slate-950 flex flex-col min-h-0"
+      <!-- LISTA -->
+      <div class="flex-1 min-h-0 overflow-y-auto">
+        <div
+          v-if="!tickets.length && !isLoadingTickets"
+          class="h-full flex items-center justify-center px-3 text-center"
         >
-          <!-- Header lista -->
-          <div class="px-3 py-2 border-b border-slate-800 flex items-center justify-between">
-            <span class="text-xs font-semibold text-slate-300 uppercase">Tickets</span>
-            <span
-              class="text-[11px] flex items-center gap-1"
-              :class="{
-                'text-emerald-400': isConnected,
-                'text-yellow-400': isConnecting,
-                'text-slate-500': !isConnected && !isConnecting,
+          <p class="text-xs" :style="{ color: 'var(--text-muted)' }">
+            No hay tickets cargados.<br />
+            Pulsa <span class="font-semibold">“Cargar tickets”</span>.
+          </p>
+        </div>
+        <div
+          v-else-if="tickets.length && !filteredTickets.length"
+          class="h-full flex items-center justify-center px-3 text-center"
+        >
+          <p class="text-xs" :style="{ color: 'var(--text-muted)' }">
+            No hay tickets con los filtros actuales.
+          </p>
+        </div>
+        <ul v-else class="space-y-2 list-none m-0 p-2">
+          <li
+            v-for="t in filteredTickets"
+            :key="t.id"
+            @click="handleSelectTicket(t)"
+            class="relative rounded-xl px-4 py-3 cursor-pointer transition border hover:shadow-md"
+            :style="{
+              background:
+                t.id === selectedTicketId
+                  ? 'var(--ticket-selected-bg)'
+                  : isUnassigned(t)
+                  ? 'var(--ticket-unassigned-bg)'
+                  : 'var(--bg-soft)',
+              borderColor:
+                t.id === selectedTicketId
+                  ? 'rgba(16,185,129,0.55)'
+                  : isUnassigned(t)
+                  ? 'rgba(245,158,11,0.45)'
+                  : 'var(--border-main)',
+              boxShadow: t.id === selectedTicketId ? '0 0 0 2px rgba(16,185,129,0.18)' : 'none',
+            }"
+          >
+            <!-- Barra izquierda sin asignar -->
+            <div
+              v-if="isUnassigned(t)"
+              class="absolute left-0 top-0 h-full w-1.5 rounded-l-xl"
+              style="background: #f59e0b"
+            />
+            <!-- Header -->
+            <div class="flex justify-between items-start gap-3">
+              <h3 class="text-base font-medium truncate">
+                #{{ t.id }} – {{ t.subject || 'Sin asunto' }}
+              </h3>
+              <div class="flex items-center gap-2 shrink-0">
+                <!-- Estado -->
+                <span
+                  class="text-xs px-3 py-1 rounded-full font-semibold border"
+                  :class="{
+                    'border-emerald-500 text-emerald-300 bg-emerald-500/10': t.status === 'PENDING',
+                    'border-amber-500 text-amber-300 bg-amber-500/10': t.status === 'IN_PROGRESS',
+                    'border-sky-500 text-sky-300 bg-sky-500/10': t.status === 'RESOLVED',
+                    'border-slate-500 text-slate-500 bg-slate-500/10':
+                      !t.status || t.status === 'CLOSED',
+                  }"
+                >
+                  {{ getStatusLabel(t.status) }}
+                </span>
+                <!-- Nuevo -->
+                <span
+                  v-if="ticketHasNew[t.id]"
+                  class="text-xs px-3 py-1 rounded-full bg-emerald-500 text-white font-semibold uppercase"
+                >
+                  Nuevo
+                </span>
+              </div>
+            </div>
+            <!-- Cliente -->
+            <p class="text-sm mt-1 truncate" :style="{ color: 'var(--text-main)' }">
+              {{ t.requesterName || 'Usuario desconocido' }}
+            </p>
+            <!-- Cargo / Área -->
+            <p
+              v-if="t.clientCargo || t.clientArea"
+              class="text-sm truncate"
+              :style="{ color: 'var(--text-soft)' }"
+            >
+              {{ t.clientCargo }} <span v-if="t.clientCargo && t.clientArea"> · </span>
+              {{ t.clientArea }}
+            </p>
+            <!-- Footer -->
+            <div
+              class="flex items-center justify-between mt-3 text-sm"
+              :style="{ color: 'var(--text-soft)' }"
+            >
+              <span class="truncate">
+                🕒
+                {{
+                  t.updatedAt || t.createdAt
+                    ? formatDateTime((t.updatedAt || t.createdAt) as string)
+                    : ''
+                }}
+              </span>
+              <span v-if="t.assignedToName" class="truncate"> 🎧 {{ t.assignedToName }} </span>
+              <span
+                v-if="isUnassigned(t)"
+                class="px-2 py-0.5 rounded-full text-xs border"
+                style="border-color: #f59e0b; color: #fbbf24"
+              >
+                SIN ASIGNAR
+              </span>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </aside>
+    <!-- ========================= COLUMNA DERECHA (Chat) ========================== -->
+    <section
+      class="flex-1 min-w-0 flex flex-col min-h-0 overflow-hidden"
+      :style="{ background: 'var(--bg-main)' }"
+    >
+      <!-- HEADER CHAT -->
+      <div
+        class="shrink-0 px-6 py-5 border-b"
+        :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
+      >
+        <div class="flex items-start justify-between gap-6">
+          <div class="min-w-0">
+            <h2 class="text-2xl font-bold leading-tight truncate">
+              <span v-if="selectedTicketId">Ticket #{{ selectedTicketId }}</span>
+              <span v-else>Selecciona un ticket</span>
+            </h2>
+            <p class="text-base mt-1 truncate" :style="{ color: 'var(--text-soft)' }">
+              {{ selectedTicket?.subject || 'Sin asunto' }}
+            </p>
+            <div class="flex flex-wrap gap-3 mt-4 text-sm">
+              <span
+                class="px-3 py-1 rounded-lg border"
+                :style="{
+                  background: 'var(--bg-soft)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
+              >
+                👤 USUARIO: {{ selectedTicket?.requesterName || 'Sin solicitante' }}
+              </span>
+              <span
+                v-if="selectedTicket?.createdAt"
+                class="px-3 py-1 rounded-lg border"
+                :style="{
+                  background: 'var(--bg-soft)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-soft)',
+                }"
+              >
+                🕒 {{ formatDateTime(selectedTicket.createdAt as string) }}
+              </span>
+              <span
+                v-if="selectedTicket?.assignedToName"
+                class="px-3 py-1 rounded-lg border"
+                :style="{
+                  background: 'var(--bg-soft)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-soft)',
+                }"
+              >
+                🎧 AGENTE: {{ selectedTicket.assignedToName }}
+              </span>
+              <span
+                class="px-3 py-1 rounded-lg border"
+                :style="{
+                  background: 'var(--bg-soft)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-soft)',
+                }"
+              >
+                Estado:
+                <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
+                  {{ getStatusLabel(selectedTicket?.status) }}
+                </span>
+              </span>
+            </div>
+          </div>
+          <div class="flex flex-col items-end gap-3 shrink-0">
+            <div class="flex items-center gap-3">
+              <span class="text-sm" :style="{ color: 'var(--text-soft)' }">Estado</span>
+              <select
+                class="text-sm rounded-lg px-3 py-2 min-w-[150px] border focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                :style="{
+                  background: 'var(--bg-soft)',
+                  borderColor: 'var(--border-main)',
+                  color: 'var(--text-main)',
+                }"
+                :disabled="!selectedTicketId || isUpdatingStatus || !canChangeStatus"
+                :value="selectedTicket?.status || ''"
+                @change="changeStatus(($event.target as HTMLSelectElement).value)"
+              >
+                <option value="" disabled>Selecciona...</option>
+                <option v-for="opt in STATUS_OPTIONS" :key="opt.value" :value="opt.value">
+                  {{ opt.label }}
+                </option>
+              </select>
+            </div>
+            <button
+              v-if="selectedTicketId"
+              type="button"
+              class="h-10 px-4 rounded-lg text-sm font-semibold border transition"
+              :style="{
+                background: 'var(--bg-soft)',
+                borderColor: 'var(--border-main)',
+                color: 'var(--text-main)',
+              }"
+              @click="closeChat"
+            >
+              ⎋ Salir del chat
+            </button>
+            <p v-if="statusError" class="text-xs text-rose-500 max-w-xs text-right">
+              {{ statusError }}
+            </p>
+          </div>
+        </div>
+      </div>
+      <!-- MENSAJES -->
+      <div
+        ref="chatContainer"
+        class="flex-1 min-h-0 overflow-y-auto px-6 py-4 relative"
+        @scroll="checkIfAtBottom"
+        @dragover="onDragOver"
+        @dragleave="onDragLeave"
+        @drop="onDropFiles"
+      >
+        <!-- overlay drag -->
+        <div
+          v-if="isDragging"
+          class="absolute inset-0 z-10 border-2 rounded-lg flex items-center justify-center pointer-events-none"
+          :style="{ background: 'rgba(15,23,42,0.08)', borderColor: 'rgba(16,185,129,0.6)' }"
+        >
+          <div
+            class="px-4 py-2 rounded-lg border text-sm"
+            :style="{
+              background: 'var(--bg-panel)',
+              borderColor: 'var(--border-main)',
+              color: 'var(--text-main)',
+            }"
+          >
+            Suelta los archivos para adjuntar 📎
+          </div>
+        </div>
+        <div v-if="!selectedTicketId" class="h-full flex items-center justify-center relative z-10">
+          <div class="flex flex-col items-center">
+            <!-- LOGO FUERA (FLOTANTE) -->
+            <img
+              src="https://clinicasagradafamilia.net/logos-firmas/Logo_IT-Plateado-Sin-Fondo.png"
+              alt="IT plateado"
+              class="h-72 w-72 object-contain mb-6 opacity-90"
+            />
+
+            <!-- CARD SOLO TEXTO -->
+            <div
+              class="max-w-md text-center rounded-2xl border px-8 py-6 shadow-sm"
+              :style="{
+                background: 'var(--bg-panel)',
+                borderColor: 'var(--border-main)',
               }"
             >
-              <span
-                class="w-2 h-2 rounded-full"
-                :class="{
-                  'bg-emerald-400': isConnected,
-                  'bg-yellow-400': isConnecting,
-                  'bg-slate-500': !isConnected && !isConnecting,
-                }"
-              />
-              {{ isConnecting ? 'Conectando' : isConnected ? 'Conectado' : 'Desconectado' }}
-            </span>
-          </div>
-
-          <!-- Filtros -->
-          <div class="px-3 py-3 border-b border-slate-800 text-[11px] bg-slate-950 space-y-2">
-            <div class="flex flex-wrap gap-1.5">
-              <button
-                v-for="f in STATUS_FILTERS"
-                :key="f.value"
-                type="button"
-                class="px-3 py-1 rounded-full border font-semibold transition-colors"
-                :class="
-                  statusFilter === f.value
-                    ? 'bg-emerald-500 text-white border-emerald-500'
-                    : 'bg-transparent text-slate-300 border-slate-600 hover:bg-slate-800/60'
-                "
-                @click="statusFilter = f.value"
-              >
-                <template v-if="f.value === 'ALL'">Todos ({{ totalTickets }})</template>
-                <template v-else-if="f.value === 'PENDING'">Abiertos ({{ openCount }})</template>
-                <template v-else-if="f.value === 'IN_PROGRESS'"
-                  >En progreso ({{ inProgressCount }})</template
-                >
-                <template v-else-if="f.value === 'RESOLVED'"
-                  >Resueltos ({{ resolvedCount }})</template
-                >
-                <template v-else-if="f.value === 'CLOSED'">Cerrados ({{ closedCount }})</template>
-              </button>
-            </div>
-
-            <!-- Filtros extra SOLO para admin -->
-            <div v-if="isAdmin" class="flex flex-col gap-2 mt-1">
-              <div class="flex flex-wrap gap-2">
-                <select
-                  v-model="areaFilter"
-                  class="flex-1 min-w-[120px] bg-slate-900 border border-slate-700 rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                >
-                  <option value="ALL">Todas las áreas</option>
-                  <option v-for="a in availableAreas" :key="a" :value="a">
-                    {{ a }}
-                  </option>
-                </select>
-
-                <select
-                  v-model="agentFilter"
-                  class="flex-1 min-w-[130px] bg-slate-900 border border-slate-700 rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                >
-                  <option value="ALL">Todos los agentes</option>
-                  <option value="UNASSIGNED">Sin asignar</option>
-                  <option v-for="ag in availableAgents" :key="ag.id" :value="String(ag.id)">
-                    {{ ag.name }}
-                  </option>
-                </select>
-              </div>
-
-              <p class="text-[11px] text-slate-400">
-                {{ filteredCount }} de {{ totalTickets }} tickets mostrados.
-              </p>
-            </div>
-          </div>
-
-          <!-- Lista de tickets -->
-          <div class="flex-1 overflow-y-auto">
-            <div
-              v-if="!tickets.length && !isLoadingTickets"
-              class="h-full flex items-center justify-center px-3 text-center"
-            >
-              <p class="text-xs text-slate-500">
-                No hay tickets cargados.<br />
-                Pulsa <span class="font-semibold">“Cargar tickets”</span>.
-              </p>
-            </div>
-
-            <div
-              v-else-if="tickets.length && !filteredTickets.length"
-              class="h-full flex items-center justify-center px-3 text-center"
-            >
-              <p class="text-xs text-slate-500">No hay tickets con los filtros actuales.</p>
-            </div>
-
-            <ul v-else class="space-y-2 list-none m-0 p-2">
-              <li
-                v-for="t in filteredTickets"
-                :key="t.id"
-                @click="handleSelectTicket(t)"
-                :class="[
-                  ticketCardClasses(t),
-                  'relative rounded-xl px-4 py-3 cursor-pointer transition',
-                  'hover:bg-slate-800/60',
-                  t.id === selectedTicketId ? 'ring-2 ring-emerald-500/70' : '',
-                ]"
-              >
-                <!-- Barra izquierda sin asignar -->
-                <div
-                  v-if="isUnassigned(t)"
-                  class="absolute left-0 top-0 h-full w-1.5 bg-amber-400 rounded-l-xl"
-                />
-
-                <!-- Header -->
-                <div class="flex justify-between items-start gap-3">
-                  <h3 class="text-base font-semibold truncate">
-                    #{{ t.id }} – {{ t.subject || 'Sin asunto' }}
-                  </h3>
-
-                  <div class="flex items-center gap-2 shrink-0">
-                    <!-- Estado -->
-                    <span
-                      class="text-xs px-3 py-1 rounded-full font-semibold border"
-                      :class="{
-                        'border-emerald-500 text-emerald-300 bg-emerald-500/10':
-                          t.status === 'PENDING',
-                        'border-amber-400 text-amber-300 bg-amber-500/10':
-                          t.status === 'IN_PROGRESS',
-                        'border-sky-400 text-sky-300 bg-sky-500/10': t.status === 'RESOLVED',
-                        'border-slate-500 text-slate-300 bg-slate-500/10':
-                          !t.status || t.status === 'CLOSED',
-                      }"
-                    >
-                      {{
-                        t.status === 'PENDING'
-                          ? 'ABIERTO'
-                          : t.status === 'IN_PROGRESS'
-                          ? 'EN PROGRESO'
-                          : t.status === 'RESOLTO'
-                          ? 'RESUELTO'
-                          : 'CERRADO'
-                      }}
-                    </span>
-
-                    <!-- Nuevo -->
-                    <span
-                      v-if="ticketHasNew[t.id]"
-                      class="text-xs px-3 py-1 rounded-full bg-emerald-500 text-white font-semibold uppercase"
-                    >
-                      Nuevo
-                    </span>
-                  </div>
-                </div>
-
-                <!-- Cliente -->
-                <p class="text-sm text-slate-300 mt-1 truncate">
-                  {{ t.requesterName || 'Usuario desconocido' }}
-                </p>
-
-                <!-- Cargo / Área -->
-                <p v-if="t.clientCargo || t.clientArea" class="text-sm text-slate-400 truncate">
-                  {{ t.clientCargo }}
-                  <span v-if="t.clientCargo && t.clientArea"> · </span>
-                  {{ t.clientArea }}
-                </p>
-
-                <!-- Footer -->
-                <div class="flex items-center justify-between mt-3 text-sm text-slate-400">
-                  <span>
-                    🕒
-                    {{
-                      t.updatedAt || t.createdAt
-                        ? formatDateTime((t.updatedAt || t.createdAt) as string)
-                        : ''
-                    }}
-                  </span>
-
-                  <span v-if="t.assignedToName" class="truncate"> 🎧 {{ t.assignedToName }} </span>
-
-                  <span
-                    v-if="isUnassigned(t)"
-                    class="px-2 py-0.5 rounded-full text-xs border border-amber-400 text-amber-300"
-                  >
-                    SIN ASIGNAR
-                  </span>
-                </div>
-              </li>
-            </ul>
-          </div>
-        </aside>
-
-        <!-- COLUMNA DERECHA: CHAT -->
-        <section class="flex-1 flex flex-col bg-slate-900 min-h-0">
-          <div class="px-6 py-5 border-b border-slate-800 bg-slate-900/90">
-            <div class="flex items-start justify-between gap-6">
-              <!-- INFO -->
-              <div>
-                <h2 class="text-2xl font-semibold leading-tight">
-                  <span v-if="selectedTicketId">Ticket #{{ selectedTicketId }}</span>
-                  <span v-else>Selecciona un ticket</span>
-                </h2>
-
-                <p class="text-base text-slate-400 mt-1">
-                  {{ selectedTicket?.subject || 'Sin asunto' }}
-                </p>
-
-                <!-- META -->
-                <div class="flex flex-wrap gap-3 mt-4 text-sm">
-                  <span class="px-3 py-1 rounded-lg bg-slate-800 text-slate-200">
-                    👤 USUARIO: {{ selectedTicket?.requesterName || 'Sin solicitante' }}
-                  </span>
-
-                  <span
-                    v-if="selectedTicket?.createdAt"
-                    class="px-3 py-1 rounded-lg bg-slate-800 text-slate-400"
-                  >
-                    🕒 {{ formatDateTime(selectedTicket.createdAt as string) }}
-                  </span>
-
-                  <span
-                    v-if="selectedTicket?.assignedToName"
-                    class="px-3 py-1 rounded-lg bg-slate-800 text-slate-400"
-                  >
-                    🎧 AGENTE: {{ selectedTicket.assignedToName }}
-                  </span>
-                </div>
-              </div>
-
-              <!-- ACTIONS -->
-              <div class="flex flex-col items-end gap-3">
-                <div class="flex items-center gap-3">
-                  <span class="text-sm text-slate-400">Estado</span>
-                  <select
-                    class="text-sm bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 min-w-[150px] focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    :disabled="!selectedTicketId || isUpdatingStatus || !canChangeStatus"
-                    :value="selectedTicket?.status || ''"
-                    @change="changeStatus(($event.target as HTMLSelectElement).value)"
-                  >
-                    <option value="" disabled>Selecciona...</option>
-                    <option v-for="opt in STATUS_OPTIONS" :key="opt.value" :value="opt.value">
-                      {{ opt.label }}
-                    </option>
-                  </select>
-                </div>
-
-                <button
-                  v-if="selectedTicketId"
-                  type="button"
-                  class="h-10 px-4 rounded-lg text-sm font-semibold bg-slate-800 hover:bg-slate-700 border border-slate-700"
-                  @click="closeChat"
-                  title="Salir del chat (ESC)"
-                >
-                  ⎋ Salir del chat
-                </button>
-
-                <p v-if="statusError" class="text-xs text-rose-400 max-w-xs text-right">
-                  {{ statusError }}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Mensajes (con drag&drop) -->
-          <div
-            ref="chatContainer"
-            class="relative flex-1 bg-slate-900 overflow-y-auto px-4 py-3 space-y-3 flex flex-col"
-            @scroll="checkIfAtBottom"
-            @dragover="onDragOver"
-            @dragleave="onDragLeave"
-            @drop="onDropFiles"
-          >
-            <!-- Overlay drag -->
-            <div
-              v-if="selectedTicketId && isDragging && !isTicketClosed"
-              class="absolute inset-0 z-20 bg-slate-950/70 border-2 border-dashed border-emerald-400/70 rounded-none flex items-center justify-center"
-            >
-              <div class="text-center px-6">
-                <p class="text-lg font-semibold text-emerald-200">Suelta los archivos aquí</p>
-                <p class="text-xs text-slate-300 mt-1">Se adjuntarán al próximo mensaje</p>
-              </div>
-            </div>
-
-            <div v-if="!selectedTicketId" class="flex-1 flex items-center justify-center">
-              <p class="text-sm text-slate-500 text-center">
-                Selecciona un ticket en la columna izquierda<br />
+              <p class="text-sm leading-7" :style="{ color: 'var(--text-muted)' }">
+                Selecciona un ticket en la columna izquierda
+                <br />
                 para ver y responder el chat.
               </p>
             </div>
+          </div>
+        </div>
+        <template v-else>
+          <div v-if="typedMessages.length === 0" class="h-full flex items-center justify-center">
+            <p class="text-sm italic" :style="{ color: 'var(--text-muted)' }">
+              No hay mensajes aún en este ticket. Envía el primero 👋
+            </p>
+          </div>
+          <div
+            v-for="msg in typedMessages"
+            :key="msg.id"
+            class="flex w-full mb-3"
+            :class="isMine(msg) ? 'justify-end' : 'justify-start'"
+          >
+            <div
+              class="max-w-xs md:max-w-md px-3 py-2 rounded-2xl shadow border text-sm"
+              :style="
+                isMine(msg)
+                  ? {
+                      background: '#10b981',
+                      color: '#ffffff',
+                      borderColor: '#10b981',
+                      borderBottomRightRadius: '0.25rem',
+                    }
+                  : {
+                      background: 'var(--message-other-bg)',
+                      color: 'var(--text-main)',
+                      borderColor: 'var(--border-main)',
+                      borderBottomLeftRadius: '0.25rem',
+                    }
+              "
+            >
+              <p class="text-[11px] font-semibold mb-1">
+                {{ isMine(msg) ? 'Tú' : msg.sender?.name || 'Usuario' }}
+              </p>
 
-            <template v-else>
-              <div
-                v-if="typedMessages.length === 0"
-                class="flex-1 flex items-center justify-center"
-              >
-                <p class="text-sm text-slate-500 italic">
-                  No hay mensajes aún en este ticket. Envía el primero 👋
-                </p>
-              </div>
+              <p v-if="msg.content" class="whitespace-pre-line leading-snug mb-2">
+                {{ msg.content }}
+              </p>
 
-              <div
-                v-for="msg in typedMessages"
-                :key="msg.id"
-                class="flex w-full"
-                :class="isMine(msg) ? 'justify-end' : 'justify-start'"
-              >
-                <div
-                  class="max-w-xs md:max-w-md px-3 py-2 rounded-2xl shadow border text-sm"
-                  :class="
-                    isMine(msg)
-                      ? 'bg-emerald-600 text-white border-white rounded-br-sm'
-                      : 'bg-gray-600 text-white border-gray-500 rounded-bl-sm'
-                  "
-                >
-                  <p class="text-[11px] font-semibold text-left mb-1">
-                    {{ isMine(msg) ? 'Tú' : msg.sender?.name || 'Usuario' }}
-                  </p>
-
-                  <p v-if="msg.content" class="whitespace-pre-line text-left leading-snug mb-2">
-                    {{ msg.content }}
-                  </p>
-
-                  <!-- ✅ Adjuntos del mensaje -->
-                  <div v-if="msg.attachments?.length" class="space-y-2 mb-2">
-                    <div
-                      v-for="att in msg.attachments"
-                      :key="att.id"
-                      class="rounded-lg border border-white/20 bg-black/10 p-2"
+              <!-- ADJUNTOS DEL MENSAJE -->
+              <div v-if="msg.attachments?.length" class="space-y-2 mb-2">
+                <template v-for="att in msg.attachments" :key="att.id">
+                  <!-- Imagen -->
+                  <div v-if="isImage(att)" class="space-y-2">
+                    <button
+                      type="button"
+                      class="block overflow-hidden rounded-lg border"
+                      :style="{
+                        borderColor: isMine(msg) ? 'rgba(255,255,255,0.25)' : 'var(--border-main)',
+                      }"
+                      @click="openImagePreview(att)"
                     >
-                      <!-- Imagen preview -->
-                      <template v-if="isImage(att)">
-                        <button
-                          type="button"
-                          class="block"
-                          @click="openImagePreview(att)"
-                          title="Ver imagen"
-                        >
-                          <img
-                            :src="fileUrl(att)"
-                            alt="Adjunto"
-                            class="max-h-60 w-auto rounded-md border border-white/20 hover:border-white/60 transition cursor-zoom-in"
-                          />
-                        </button>
+                      <img
+                        :src="fileUrl(att)"
+                        :alt="att.filename"
+                        class="max-h-56 w-full object-cover"
+                      />
+                    </button>
 
-                        <div class="mt-1 text-[10px] text-white/90 flex justify-between gap-2">
-                          <span class="truncate">{{ att.filename }}</span>
-                          <span class="opacity-80 whitespace-nowrap">
-                            {{ formatBytes(att.size) }}
-                          </span>
-                        </div>
-                      </template>
-
-                      <!-- Archivo normal -->
-                      <template v-else>
-                        <a
-                          class="text-[12px] underline text-white/95 hover:text-white"
-                          :href="fileUrl(att)"
-                          download
-                        >
-                          📎 {{ att.filename }}
-                        </a>
-                        <div class="text-[10px] text-white/80 mt-0.5">
-                          {{ att.mimeType }} • {{ formatBytes(att.size) }}
-                        </div>
-                      </template>
+                    <div class="flex items-center justify-between gap-2 text-[11px]">
+                      <span class="truncate">{{ att.filename }}</span>
+                      <a
+                        :href="fileUrl(att)"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="underline"
+                        :style="{ color: isMine(msg) ? '#ffffff' : '#10b981' }"
+                      >
+                        Ver
+                      </a>
                     </div>
                   </div>
 
-                  <p class="text-[10px] text-left text-white opacity-90">
-                    {{ formatDateTime(msg.createdAt) }}
-                  </p>
-                </div>
+                  <!-- Archivo normal -->
+                  <a
+                    v-else
+                    :href="fileUrl(att)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-[12px] hover:opacity-90"
+                    :style="{
+                      background: isMine(msg) ? 'rgba(255,255,255,0.10)' : 'var(--bg-soft)',
+                      borderColor: isMine(msg) ? 'rgba(255,255,255,0.20)' : 'var(--border-main)',
+                      color: isMine(msg) ? '#ffffff' : 'var(--text-main)',
+                    }"
+                  >
+                    <div class="min-w-0">
+                      <p class="truncate font-medium">📎 {{ att.filename }}</p>
+                      <p class="text-[10px]" :style="{ opacity: isMine(msg) ? '0.8' : '0.65' }">
+                        {{ formatBytes(att.size) }}
+                      </p>
+                    </div>
+                    <span class="shrink-0 text-[11px] underline">Abrir</span>
+                  </a>
+                </template>
               </div>
-            </template>
-          </div>
 
-          <div v-if="isTicketClosed" class="flex justify-center mb-3">
+              <p class="text-[10px]" :style="{ opacity: isMine(msg) ? '0.9' : '0.75' }">
+                {{ formatDateTime(msg.createdAt) }}
+              </p>
+            </div>
+          </div>
+        </template>
+      </div>
+      <!-- FOOTER -->
+      <div
+        class="shrink-0 border-t"
+        :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
+      >
+        <div
+          v-if="selectedTicketId && pendingFiles.length && !isTicketClosed"
+          class="px-4 py-2 border-b"
+          :style="{ background: 'var(--bg-soft)', borderColor: 'var(--border-main)' }"
+        >
+          <div class="flex flex-wrap gap-2">
             <div
-              class="max-w-md w-full px-5 py-3 rounded-lg border border-yellow-400 bg-yellow-200/10 text-xs text-yellow-100 flex items-start gap-2"
+              v-for="(f, idx) in pendingFiles"
+              :key="idx"
+              class="flex items-center gap-2 px-2 py-1 rounded-md border"
+              :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
             >
-              <span class="text-lg leading-none">🔒</span>
-              <div>
-                <p class="font-semibold mb-1">Ticket CERRADO</p>
-                <p>Este ticket está cerrado. No puedes enviar más mensajes desde este chat.</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- ✅ Archivos listos para enviar -->
-          <div
-            v-if="selectedTicketId && pendingFiles.length && !isTicketClosed"
-            class="px-4 py-2 border-t border-slate-800 bg-slate-950/60"
-          >
-            <div class="flex items-center justify-between gap-2 mb-2">
-              <p class="text-[11px] text-slate-300 font-semibold">
-                Adjuntos para enviar ({{ pendingFiles.length }})
-              </p>
-              <p class="text-[10px] text-slate-500">
-                Tip: arrastra al chat o pega con
-                <span class="font-semibold">Ctrl+V</span>
-              </p>
-            </div>
-
-            <div class="flex flex-wrap gap-2">
-              <div
-                v-for="(f, idx) in pendingFiles"
-                :key="idx"
-                class="flex items-center gap-2 px-2 py-1 rounded-md border border-slate-700 bg-slate-900/70"
+              <span class="text-[11px] truncate" :style="{ color: 'var(--text-main)' }">
+                📎 {{ f.name }}
+              </span>
+              <button
+                type="button"
+                class="text-[11px] text-rose-500 hover:text-rose-600"
+                @click="removePendingFile(idx)"
               >
-                <span class="text-[11px] text-slate-200 max-w-[240px] truncate">
-                  📎 {{ f.name }}
-                </span>
-                <span class="text-[10px] text-slate-400 whitespace-nowrap">
-                  {{ formatBytes(f.size) }}
-                </span>
-                <button
-                  type="button"
-                  class="text-[11px] text-rose-300 hover:text-rose-200"
-                  @click="removePendingFile(idx)"
-                  title="Quitar"
-                >
-                  ✕
-                </button>
-              </div>
+                ✕
+              </button>
             </div>
-
-            <p v-if="uploadError" class="text-[11px] text-rose-400 mt-2">
-              {{ uploadError }}
-            </p>
           </div>
-
-          <!-- Input -->
-          <form
-            class="border-t border-slate-800 px-4 py-3 flex gap-2 bg-slate-900/90 items-center"
-            @submit.prevent="handleSend"
+        </div>
+        <form class="min-h-[64px] px-4 py-3 flex gap-2 items-center" @submit.prevent="handleSend">
+          <label
+            class="h-10 px-3 rounded-md text-sm font-semibold border cursor-pointer flex items-center justify-center"
+            :style="{
+              background: 'var(--bg-soft)',
+              borderColor: 'var(--border-main)',
+              color: 'var(--text-main)',
+            }"
+            :class="!selectedTicketId || isTicketClosed ? 'opacity-50 cursor-not-allowed' : ''"
           >
-            <!-- 📎 Adjuntar -->
-            <label
-              class="h-10 px-3 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-semibold border border-slate-700 cursor-pointer flex items-center justify-center"
-              :class="!selectedTicketId || isTicketClosed ? 'opacity-50 cursor-not-allowed' : ''"
-              title="Adjuntar archivos"
-            >
-              📎
-              <input
-                type="file"
-                class="hidden"
-                multiple
-                :disabled="!selectedTicketId || isTicketClosed"
-                @change="addFiles(($event.target as HTMLInputElement).files)"
-              />
-            </label>
-
+            📎
+            <input
+              type="file"
+              class="hidden"
+              multiple
+              :disabled="!selectedTicketId || isTicketClosed"
+              @change="addFiles(($event.target as HTMLInputElement).files)"
+            />
+          </label>
+          <div class="relative flex-1 min-w-0">
             <input
               v-model="newMessage"
-              @paste="onPaste"
               type="text"
-              class="flex-1 rounded-md bg-slate-900 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
-              :placeholder="
-                isTicketClosed
-                  ? 'Ticket CERRADO. No puedes enviar mensajes.'
-                  : pendingFiles.length
-                  ? 'Opcional: escribe un mensaje para acompañar los adjuntos (o pega con Ctrl+V)...'
-                  : 'Escribe un mensaje para este ticket... (o pega una captura con Ctrl+V)'
-              "
+              class="w-full rounded-md px-3 py-2 text-sm border focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-80 disabled:cursor-not-allowed"
+              :style="{
+                background: 'var(--input-bg)',
+                borderColor: 'var(--border-main)',
+                color: 'var(--text-main)',
+              }"
+              :placeholder="isTicketClosed ? 'Ticket CERRADO' : 'Escribe un mensaje...'"
               :disabled="!selectedTicketId || isTicketClosed"
+              @input="onMessageInput"
+              @keydown="onMessageKeydown"
+              @paste="onPaste"
             />
-
-            <button
-              type="submit"
-              class="px-4 py-2 rounded-md bg-emerald-500 hover:bg-emerald-600 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-              :disabled="!canSend || isTicketClosed || isUploading"
-              :title="pendingFiles.length ? 'Enviar con adjuntos' : 'Enviar mensaje'"
+            <!-- Dropdown quick replies -->
+            <div
+              v-if="showQuickReplies && filteredQuickReplies.length"
+              class="absolute left-0 right-0 bottom-12 z-30 rounded-lg border shadow-xl overflow-hidden"
+              :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
             >
-              {{
-                isUploading
-                  ? 'Enviando...'
-                  : isTicketClosed
-                  ? 'Ticket CERRADO'
-                  : pendingFiles.length
-                  ? 'Enviar + adjuntos'
-                  : 'Enviar'
-              }}
-            </button>
-          </form>
-
-          <p v-if="lastError" class="text-[11px] text-rose-400 px-4 pb-2 text-right">
-            Último error WS: {{ lastError }}
-          </p>
-        </section>
-      </div>
-
-      <!-- 🖼️ MODAL IMAGEN FULLSCREEN + ZOOM + GALERÍA -->
-      <div
-        v-if="imagePreviewOpen"
-        class="fixed inset-0 z-[999] bg-black/90 flex items-center justify-center"
-        @click.self="closeImagePreview"
-        @wheel.prevent="onPreviewWheel"
-      >
-        <!-- Cerrar -->
-        <button
-          class="absolute top-4 right-4 text-white text-3xl font-bold hover:text-red-400"
-          @click="closeImagePreview"
-          title="Cerrar (ESC)"
-          type="button"
-        >
-          ✕
-        </button>
-
-        <!-- Descargar -->
-        <button
-          @click="downloadImage"
-          class="absolute top-4 left-4 px-4 py-2 rounded-md bg-emerald-600 hover:bg-emerald-700 text-sm font-semibold text-white"
-          type="button"
-        >
-          ⬇ Descargar
-        </button>
-
-        <!-- Reset zoom -->
-        <!-- <button
-          class="absolute top-4 left-[140px] px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-semibold text-white border border-white/20"
-          @click="resetPreviewZoom"
-          type="button"
-          title="Reset zoom"
-        >
-          🔄 Reset
-        </button> -->
-
-        <!-- ⬅ -->
-        <button
-          v-if="imageGallery.length > 1"
-          class="absolute left-4 top-1/2 -translate-y-1/2 h-12 w-12 rounded-full bg-white/10 hover:bg-white/20 text-white text-2xl border border-white/20"
-          @click.stop="prevImage"
-          type="button"
-          title="Anterior (←)"
-        >
-          ‹
-        </button>
-
-        <!-- ➡ -->
-        <button
-          v-if="imageGallery.length > 1"
-          class="absolute right-4 top-1/2 -translate-y-1/2 h-12 w-12 rounded-full bg-white/10 hover:bg-white/20 text-white text-2xl border border-white/20"
-          @click.stop="nextImage"
-          type="button"
-          title="Siguiente (→)"
-        >
-          ›
-        </button>
-
-        <!-- Contador -->
-        <div
-          v-if="imageGallery.length > 1"
-          class="absolute bottom-4 left-1/2 -translate-x-1/2 text-xs text-white/80 bg-white/10 border border-white/20 rounded-full px-3 py-1"
-        >
-          {{ imageIndex + 1 }} / {{ imageGallery.length }}
-        </div>
-
-        <!-- Imagen -->
-        <img
-          :src="imagePreviewUrl"
-          :alt="imagePreviewName"
-          class="max-w-[95vw] max-h-[95vh] object-contain rounded-lg shadow-2xl select-none"
-          :style="{ transform: `scale(${previewScale})` }"
-          draggable="false"
-          @click.stop
-        />
-      </div>
-
-      <!-- MODAL LOGOUT -->
-      <div
-        v-if="showLogoutModal"
-        class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
-      >
-        <div class="bg-slate-900 border border-slate-700 rounded-lg p-6 w-full max-w-sm shadow-xl">
-          <h2 class="text-lg font-semibold text-white mb-2">¿Cerrar sesión?</h2>
-          <p class="text-sm text-slate-300 mb-4">¿Estás seguro de que deseas cerrar sesión?</p>
-
-          <div class="flex justify-end gap-3">
-            <button
-              @click="cancelLogout"
-              class="px-3 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-sm"
-            >
-              Cancelar
-            </button>
-            <button
-              @click="doLogout"
-              class="px-3 py-1 rounded-md bg-red-500 hover:bg-red-600 text-sm font-semibold"
-            >
-              Sí, cerrar sesión
-            </button>
+              <div
+                class="px-3 py-2 text-[11px] border-b"
+                :style="{ color: 'var(--text-soft)', borderColor: 'var(--border-main)' }"
+              >
+                Plantillas (usa ↑ ↓ y Enter)
+              </div>
+              <button
+                v-for="(tpl, i) in filteredQuickReplies"
+                :key="tpl.id"
+                type="button"
+                class="w-full text-left px-3 py-2 text-sm transition"
+                :style="
+                  i === selectedReplyIndex
+                    ? { background: 'rgba(16,185,129,0.10)', color: 'var(--text-main)' }
+                    : { background: 'transparent', color: 'var(--text-main)' }
+                "
+                @mousedown.prevent="applyTemplate(tpl)"
+              >
+                <div class="font-semibold truncate">{{ tpl.title }}</div>
+                <div class="text-[12px] truncate" :style="{ color: 'var(--text-soft)' }">
+                  {{ tpl.content }}
+                </div>
+              </button>
+            </div>
           </div>
-        </div>
+          <button
+            type="submit"
+            class="px-4 py-2 rounded-md bg-emerald-500 hover:bg-emerald-600 text-sm font-semibold text-white disabled:opacity-50 shadow"
+            :disabled="!canSend || isTicketClosed"
+          >
+            Enviar
+          </button>
+        </form>
       </div>
-    </main>
+    </section>
   </div>
+  <!-- SETTINGS -->
+  <!-- <SettingsModal v-if="openSettings" :open="openSettings" @close="openSettings = false" /> -->
 </template>
 
 <style scoped>

@@ -1,12 +1,11 @@
 // src/composables/useAuth.ts
-import { ref } from "vue";
+import { ref } from 'vue';
 
 interface AuthUser {
   id: number;
   name: string;
   email?: string;
   roles?: string[];
-  // añade lo que devuelva tu backend
 }
 
 const token = ref<string | null>(null);
@@ -16,10 +15,10 @@ const authError = ref<string | null>(null);
 
 // Cargar token/usuario desde localStorage cuando arranca la app
 function initAuth() {
-  if (typeof window === "undefined") return;
+  if (typeof window === 'undefined') return;
 
-  const storedToken = localStorage.getItem("hd_token");
-  const storedUser = localStorage.getItem("hd_user");
+  const storedToken = localStorage.getItem('hd_token');
+  const storedUser = localStorage.getItem('hd_user');
 
   if (storedToken) {
     token.value = storedToken;
@@ -34,31 +33,53 @@ function initAuth() {
   }
 }
 
+// Guardar sesión manualmente
+function setAuth(accessToken: string, userData: AuthUser | null) {
+  token.value = accessToken;
+  user.value = userData;
+
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('hd_token', accessToken);
+    localStorage.setItem('hd_user', JSON.stringify(userData || {}));
+  }
+}
+
+// Limpiar sesión
+function clearAuth() {
+  token.value = null;
+  user.value = null;
+  authError.value = null;
+
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('hd_token');
+    localStorage.removeItem('hd_user');
+  }
+}
+
 // Hacer login contra el backend
 async function login(email: string, password: string) {
   authError.value = null;
   isAuthLoading.value = true;
 
   try {
-    const res = await fetch("http://localhost:3000/auth/login", {
-      method: "POST",
+    const res = await fetch('http://localhost:3000/auth/login', {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({ email, password }),
     });
 
     if (!res.ok) {
       if (res.status === 401 || res.status === 400) {
-        throw new Error("Credenciales inválidas");
+        throw new Error('Credenciales inválidas');
       }
       throw new Error(`Error ${res.status} al iniciar sesión`);
     }
 
     const data: any = await res.json();
-    console.log("🔐 LOGIN RESPONSE:", data); // <--- para ver qué devuelve tu backend
+    console.log('🔐 LOGIN RESPONSE:', data);
 
-    // Intenta varias claves típicas para el token
     const accessToken =
       data.access_token ||
       data.token ||
@@ -66,38 +87,25 @@ async function login(email: string, password: string) {
       data.accessToken ||
       (data.data && (data.data.access_token || data.data.token));
 
-    // Intenta varias claves típicas para el usuario
-    const userData: AuthUser | null =
-      data.user || data.profile || data.data?.user || null;
+    const userData: AuthUser | null = data.user || data.profile || data.data?.user || null;
 
     if (!accessToken) {
-      throw new Error("La respuesta no contiene token");
+      throw new Error('La respuesta no contiene token');
     }
 
-    token.value = accessToken;
-    user.value = userData;
-
-    if (typeof window !== "undefined") {
-      localStorage.setItem("hd_token", accessToken);
-      localStorage.setItem("hd_user", JSON.stringify(userData || {}));
-    }
+    setAuth(accessToken, userData);
   } catch (err: any) {
     console.error(err);
-    authError.value = err.message || "No se pudo iniciar sesión.";
+    authError.value = err.message || 'No se pudo iniciar sesión.';
     throw err;
   } finally {
     isAuthLoading.value = false;
   }
 }
 
-// Cerrar sesión
+// Cerrar sesión manual
 function logout() {
-  token.value = null;
-  user.value = null;
-  if (typeof window !== "undefined") {
-    localStorage.removeItem("hd_token");
-    localStorage.removeItem("hd_user");
-  }
+  clearAuth();
 }
 
 export function useAuth() {
@@ -109,5 +117,7 @@ export function useAuth() {
     initAuth,
     login,
     logout,
+    clearAuth,
+    setAuth,
   };
 }
