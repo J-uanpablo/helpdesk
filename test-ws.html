@@ -1,14 +1,15 @@
 <!DOCTYPE html>
 <html>
-
-<body>
+  <body>
     <script>
-        let ws = new WebSocket("ws://localhost:3000/tickets/2/chat?token=PEGATUJWT");
-        ws.onopen = () => console.log("Conectado");
-        ws.onerror = e => console.log("Error", e);
-        ws.onclose = () => console.log("Cerrado");
-        ws.onmessage = e => console.log("Mensaje:", e.data);
-    </script>
-</body>
+      const API_BASE = '192.168.16.33:3000'; // o dinámico si quieres
 
+      let ws = new WebSocket(`ws://${API_BASE}/tickets/2/chat?token=PEGATUJWT`);
+
+      ws.onopen = () => console.log('Conectado');
+      ws.onerror = e => console.log('Error', e);
+      ws.onclose = () => console.log('Cerrado');
+      ws.onmessage = e => console.log('Mensaje:', e.data);
+    </script>
+  </body>
 </html>

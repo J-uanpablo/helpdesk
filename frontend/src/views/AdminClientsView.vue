@@ -160,7 +160,7 @@ async function loadClients() {
   isLoading.value = true;
 
   try {
-    const res = await apiFetch('http://localhost:3000/users/clients');
+    const res = await apiFetch('/users/clients');
 
     if (!res.ok) throw new Error('Error cargando clientes');
 
@@ -180,7 +180,7 @@ async function createClient() {
   error.value = null;
 
   try {
-    const res = await apiFetch('http://localhost:3000/users/clients', {
+    const res = await apiFetch('/users/clients', {
       method: 'POST',
       body: JSON.stringify({
         name: newClientForm.name.trim(),
@@ -257,7 +257,7 @@ async function updateClient() {
       payload.password = editClientForm.password;
     }
 
-    const res = await apiFetch(`http://localhost:3000/users/clients/${editClientForm.id}`, {
+    const res = await apiFetch(`/users/clients/${editClientForm.id}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     });
@@ -286,7 +286,7 @@ async function toggleClientActive(c: AdminClient) {
   error.value = null;
 
   try {
-    const res = await apiFetch(`http://localhost:3000/users/clients/${c.id}`, {
+    const res = await apiFetch(`/users/clients/${c.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ isActive: !c.isActive }),
     });
@@ -322,7 +322,7 @@ async function confirmDeleteClient() {
   error.value = null;
 
   try {
-    const res = await apiFetch(`http://localhost:3000/users/clients/${deleteClientTarget.id}`, {
+    const res = await apiFetch(`/users/clients/${deleteClientTarget.id}`, {
       method: 'DELETE',
     });
 

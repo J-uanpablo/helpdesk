@@ -281,7 +281,7 @@
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
     >
       <div
-        class="w-full max-w-md rounded-2xl border p-6 shadow-2xl"
+        class="w-full max-w-xl rounded-2xl border p-6 shadow-2xl"
         :style="{ background: 'var(--bg-panel)', borderColor: 'var(--border-main)' }"
       >
         <div class="flex items-start gap-3">
@@ -300,14 +300,56 @@
           </div>
         </div>
 
+        <div class="mt-5 grid gap-4 sm:grid-cols-2">
+          <div
+            class="rounded-xl border p-4"
+            :style="{ background: 'var(--bg-soft)', borderColor: 'var(--border-main)' }"
+          >
+            <p class="text-[11px] font-bold uppercase tracking-wider" style="color: #10b981">
+              Número de ticket
+            </p>
+            <p class="mt-1 text-2xl font-extrabold">#{{ createdTicketId }}</p>
+          </div>
+
+          <div
+            class="rounded-xl border p-4"
+            :style="{ background: 'var(--bg-soft)', borderColor: 'var(--border-main)' }"
+          >
+            <p class="text-[11px] font-bold uppercase tracking-wider" style="color: #10b981">
+              Tu posición en fila
+            </p>
+            <p class="mt-1 text-2xl font-extrabold">
+              <span v-if="createdTicketQueue?.queuePosition">
+                #{{ createdTicketQueue.queuePosition }}
+              </span>
+              <span v-else>-</span>
+            </p>
+
+            <p class="mt-2 text-xs" :style="{ color: 'var(--text-soft)' }">
+              <span v-if="createdTicketQueue?.area">
+                Área: <span class="font-semibold">{{ createdTicketQueue.area }}</span>
+              </span>
+            </p>
+
+            <p class="mt-1 text-xs" :style="{ color: 'var(--text-soft)' }">
+              <span v-if="createdTicketQueue?.waitingBefore !== undefined">
+                Hay {{ createdTicketQueue.waitingBefore }} ticket(s) antes que tú.
+              </span>
+            </p>
+          </div>
+        </div>
+
         <div
-          class="mt-5 rounded-xl border p-4"
-          :style="{ background: 'var(--bg-soft)', borderColor: 'var(--border-main)' }"
+          v-if="createdTicketQueue && !createdTicketQueue.canChat"
+          class="mt-4 rounded-xl border px-4 py-3 text-sm"
+          :style="{
+            background: 'rgba(59,130,246,0.08)',
+            borderColor: 'rgba(59,130,246,0.20)',
+            color: 'var(--text-main)',
+          }"
         >
-          <p class="text-[11px] font-bold uppercase tracking-wider" style="color: #10b981">
-            Número de ticket
-          </p>
-          <p class="mt-1 text-2xl font-extrabold">#{{ createdTicketId }}</p>
+          Tu ticket quedó en fila de atención. Al entrar al chat podrás ver tu turno actualizado
+          automáticamente.
         </div>
 
         <div class="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
@@ -319,7 +361,7 @@
               borderColor: 'var(--border-main)',
               color: 'var(--text-main)',
             }"
-            @click="showSuccessModal = false"
+            @click="closeSuccessModal"
           >
             Cerrar
           </button>
@@ -380,6 +422,15 @@ const selectedSupportLabel = ref('');
 
 const showSuccessModal = ref(false);
 const createdTicketId = ref<number | null>(null);
+const createdTicketQueue = ref<{
+  ticketId: number;
+  area: string | null;
+  status: string;
+  queuePosition: number;
+  waitingBefore: number;
+  totalPendingInArea: number;
+  canChat: boolean;
+} | null>(null);
 
 const supportAreas = ref<SupportAreaItem[]>([]);
 
@@ -402,7 +453,7 @@ function getAreaIcon(name: string) {
 
 async function loadSupportAreas() {
   try {
-    const res = await apiFetch('http://localhost:3000/support-areas');
+    const res = await apiFetch('/support-areas');
 
     if (!res.ok) {
       throw new Error('No se pudieron cargar las áreas de soporte');
@@ -701,6 +752,93 @@ const supportOptionsByArea: Record<string, SupportOption[]> = {
       help: 'Solicitudes no clasificadas.',
       subject: 'Otra solicitud para Webmaster',
       description: 'Tengo una solicitud que no se encuentra en las categorías anteriores.',
+    },
+  ],
+  COMPRAS: [
+    {
+      label: 'Equipos de red',
+      icon: '🌐',
+      help: 'Adquisición de equipos de conectividad y red.',
+      subject: 'Solicitud de compra de equipos de red',
+      description:
+        'Requiero la compra de equipos de red como switch, router, access point, patch panel, rack o extensores.',
+    },
+    {
+      label: 'Equipos de cómputo',
+      icon: '💻',
+      help: 'Compra de computadoras y dispositivos principales.',
+      subject: 'Solicitud de compra de equipos de cómputo',
+      description:
+        'Requiero la compra de computadoras (todo en uno, mini desktop o portátil), servidores o NAS (Synology).',
+    },
+    {
+      label: 'Periféricos y accesorios',
+      icon: '🖱️',
+      help: 'Accesorios para equipos de cómputo.',
+      subject: 'Solicitud de compra de periféricos',
+      description:
+        'Requiero la compra de periféricos como mouse, teclado, diademas, bases refrigerantes, hubs USB o adaptadores.',
+    },
+    {
+      label: 'Almacenamiento',
+      icon: '💾',
+      help: 'Dispositivos de almacenamiento interno y externo.',
+      subject: 'Solicitud de compra de almacenamiento',
+      description:
+        'Requiero la compra de discos duros (HDD, SSD, M.2), memorias RAM o memorias USB.',
+    },
+    {
+      label: 'Energía y respaldo',
+      icon: '🔋',
+      help: 'Equipos de respaldo eléctrico y protección.',
+      subject: 'Solicitud de compra de equipos de energía',
+      description:
+        'Requiero la compra de UPS, reguladores (AVR), regletas o extensiones eléctricas.',
+    },
+    {
+      label: 'Impresión y digitalización',
+      icon: '🖨️',
+      help: 'Equipos de impresión y escaneo.',
+      subject: 'Solicitud de compra de impresoras o escáner',
+      description: 'Requiero la compra de impresoras, escáner o equipos multifuncionales.',
+    },
+    {
+      label: 'Telefonía y comunicación',
+      icon: '☎️',
+      help: 'Dispositivos de comunicación.',
+      subject: 'Solicitud de compra de telefonía',
+      description: 'Requiero la compra de teléfonos IP, smartphones o sistemas de comunicación.',
+    },
+    {
+      label: 'Seguridad y videovigilancia',
+      icon: '📹',
+      help: 'Equipos de monitoreo y seguridad.',
+      subject: 'Solicitud de compra de equipos de seguridad',
+      description: 'Requiero la compra de cámaras, NVR o DVR para videovigilancia.',
+    },
+    {
+      label: 'Audio y video',
+      icon: '🎧',
+      help: 'Equipos audiovisuales.',
+      subject: 'Solicitud de compra de equipos de audio y video',
+      description:
+        'Requiero la compra de televisores, parlantes, consolas de sonido, micrófonos inalámbricos o video beam.',
+    },
+    {
+      label: 'Cableado y adaptadores',
+      icon: '🔌',
+      help: 'Cables, conectores y adaptadores.',
+      subject: 'Solicitud de compra de cableado o adaptadores',
+      description:
+        'Requiero la compra de cables de red, adaptadores (USB, HDMI, VGA, jack 3.5), splitters o extensores.',
+    },
+    {
+      label: 'Otros',
+      icon: '📌',
+      help: 'Solicitudes no clasificadas.',
+      subject: 'Otra solicitud de compras',
+      description:
+        'Requiero la compra de un equipo o accesorio que no se encuentra en las categorías anteriores.',
     },
   ],
 
@@ -1213,13 +1351,24 @@ function goBack() {
   router.push({ name: 'cliente' });
 }
 
+function closeSuccessModal() {
+  showSuccessModal.value = false;
+  createdTicketId.value = null;
+  createdTicketQueue.value = null;
+}
+
 function goToCreatedTicketChat() {
   if (!createdTicketId.value) return;
 
+  const ticketId = createdTicketId.value;
+
   showSuccessModal.value = false;
+  createdTicketId.value = null;
+  createdTicketQueue.value = null;
+
   router.push({
     name: 'cliente-chat',
-    params: { id: createdTicketId.value },
+    params: { id: ticketId },
   });
 }
 
@@ -1260,7 +1409,7 @@ async function submitTicket() {
       formData.append('files', file);
     });
 
-    const res = await apiFetch('http://localhost:3000/tickets', {
+    const res = await apiFetch('/tickets', {
       method: 'POST',
       body: formData,
     });
@@ -1272,6 +1421,7 @@ async function submitTicket() {
     }
 
     createdTicketId.value = Number(data?.id || 0) || null;
+    createdTicketQueue.value = data?.queue ?? null;
     showSuccessModal.value = true;
 
     form.subject = '';

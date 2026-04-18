@@ -60,7 +60,7 @@ async function loadTickets() {
 
   isLoadingTickets.value = true;
   try {
-    const res = await fetch('http://localhost:3000/tickets/list', {
+    const res = await fetch('/tickets/list', {
       headers: {
         Authorization: `Bearer ${token.value.trim()}`,
       },

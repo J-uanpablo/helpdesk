@@ -3,6 +3,8 @@ import { useAuth } from '../composables/useAuth';
 
 let isRedirecting = false;
 
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? '';
+
 export async function apiFetch(url: string, options: RequestInit = {}) {
   const { token, clearAuth } = useAuth();
 
@@ -17,7 +19,12 @@ export async function apiFetch(url: string, options: RequestInit = {}) {
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(url, {
+  const finalUrl =
+    url.startsWith('http://') || url.startsWith('https://')
+      ? url
+      : `${API_BASE_URL}${url.startsWith('/') ? url : `/${url}`}`;
+
+  const response = await fetch(finalUrl, {
     ...options,
     headers,
   });

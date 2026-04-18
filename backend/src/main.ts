@@ -8,30 +8,24 @@ import { ValidationPipe } from '@nestjs/common';
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-  // ✅ VALIDACIÓN GLOBAL DE DTOs
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true, // elimina campos no definidos en DTO
-      forbidNonWhitelisted: true, // error si envían campos extra
-      transform: true, // castea tipos automáticamente
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
     }),
   );
 
-  // ✅ CORS
   app.enableCors({
-    origin: [
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
-      // dominio producción
-    ],
+    origin: true,
     credentials: true,
   });
 
-  // ✅ Exponer uploads
   app.useStaticAssets(join(process.cwd(), 'uploads'), {
     prefix: '/uploads/',
   });
 
-  await app.listen(3000);
+  await app.listen(3000, '0.0.0.0');
+  console.log('Backend corriendo en http://192.168.16.33:3000');
 }
 bootstrap();

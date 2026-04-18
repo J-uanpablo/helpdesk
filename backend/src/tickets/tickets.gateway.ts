@@ -153,7 +153,7 @@ export class TicketsGateway
 
     const room = `ticket_${ticketId}`;
 
-    // Guardar en BD (aquí ya actualizas lastActivityAt en tu service)
+    // Guardar en BD
     const msg = await this.ticketsService.addMessage({
       ticketId,
       content: data.content,
@@ -163,17 +163,16 @@ export class TicketsGateway
     // Emitir a TODOS los conectados al ticket
     this.server.to(room).emit('ticket_message', msg);
 
-    // (Opcional) notificar que hubo actividad (sirve para listas)
+    // Actividad general para panel/listas
     this.server.to('agents').emit('ticket_activity', { ticketId });
 
     return msg;
   }
 
   /* ===========================
-     🔔 NEW TICKET (CORREGIDO)
+     🔔 NEW TICKET
      - Si hay área => solo a room area:XXX
      - Si NO hay área => a "agents"
-     (evita doble emit)
   ============================ */
   emitNewTicket(ticket: {
     id: number;
@@ -190,16 +189,17 @@ export class TicketsGateway
 
     const area = (payload.area || '').trim();
 
+    // ✅ siempre al room general de agentes
+    this.server.to('agents').emit('new_ticket', payload);
+
+    // ✅ además al room del área si existe
     if (area) {
       this.server.to(`area:${area}`).emit('new_ticket', payload);
-    } else {
-      this.server.to('agents').emit('new_ticket', payload);
     }
   }
 
   /* ===========================
-     ✅ CAMBIO DE ESTADO (manual o auto)
-     Esto es CLAVE para el auto-cierre
+     ✅ CAMBIO DE ESTADO
   ============================ */
   emitTicketStatusChanged(params: {
     ticketId: number;
@@ -220,7 +220,43 @@ export class TicketsGateway
     // ✅ chat del ticket abierto
     this.server.to(`ticket_${ticketId}`).emit('ticket_status_changed', payload);
 
-    // ✅ opcional: panel/listas
+    // ✅ panel/listas
     this.server.to('agents').emit('ticket_status_changed', payload);
+  }
+
+  /* ===========================
+     🕐 ACTUALIZACIÓN DE COLA
+     - Se emite al room del ticket
+     - Sirve para actualizar turno en vivo
+  ============================ */
+  emitTicketQueueUpdated(payload: {
+    ticketId: number;
+    area: string | null;
+    status: string;
+    queuePosition: number;
+    waitingBefore: number;
+    totalPendingInArea: number;
+    canChat: boolean;
+  }) {
+    const ticketId = Number(payload.ticketId);
+    if (!ticketId) return;
+
+    const normalizedPayload = {
+      ticketId,
+      area: payload.area ?? null,
+      status: String(payload.status),
+      queuePosition: Number(payload.queuePosition ?? 0),
+      waitingBefore: Number(payload.waitingBefore ?? 0),
+      totalPendingInArea: Number(payload.totalPendingInArea ?? 0),
+      canChat: Boolean(payload.canChat),
+    };
+
+    // ✅ solo al ticket afectado
+    this.server
+      .to(`ticket_${ticketId}`)
+      .emit('ticket_queue_updated', normalizedPayload);
+
+    // ✅ opcional para panel/listas de agentes
+    this.server.to('agents').emit('ticket_queue_updated', normalizedPayload);
   }
 }

@@ -39,13 +39,21 @@
       <template v-if="isStaff">
         <a @click="goSupport" :class="navLinkClass('/soporte')"> Mesa de ayuda </a>
 
+        <a
+          v-if="isAdmin"
+          @click="goOperationsDashboard"
+          :class="navLinkClass('/soporte/operations-dashboard')"
+        >
+          Dashboard
+        </a>
+
         <a @click="goClientTickets" :class="navLinkClass('/cliente')"> Mis tickets </a>
 
         <a @click="goClientNewTicket" :class="navLinkClass('/cliente/nuevo-ticket')">
           Nuevo ticket
         </a>
 
-        <a v-if="isAdmin" @click="open('reports')" :class="simpleNavLinkClass"> Informes </a>
+        <!-- <a v-if="isAdmin" @click="open('reports')" :class="simpleNavLinkClass"> Informes </a> -->
 
         <a v-if="isSuperAdmin" @click="goAdminClients" :class="navLinkClass('/admin/clientes')">
           Admin. clientes
@@ -275,6 +283,10 @@ const isRouteActive = (path: string) => {
     return route.path === '/cliente' || route.path.startsWith('/cliente/ticket/');
   }
 
+  if (path === '/soporte') {
+    return route.path === '/soporte';
+  }
+
   return route.path === path || route.path.startsWith(path + '/');
 };
 
@@ -337,6 +349,10 @@ function goClientNewTicket() {
 function goSupport() {
   router.push('/soporte');
 }
+function goOperationsDashboard() {
+  router.push('/soporte/operations-dashboard');
+}
+
 function goAdminAgents() {
   router.push('/admin/agentes');
 }

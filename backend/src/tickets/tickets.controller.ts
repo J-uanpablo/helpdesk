@@ -42,6 +42,32 @@ export class TicketsController {
   }
 
   /**
+   * Recalcula la cola de un área y emite actualización por socket
+   * a todos los tickets pendientes de esa área.
+   * También puede incluir un ticket extra (por ejemplo uno que pasó a IN_PROGRESS)
+   * para que ese cliente reciba canChat=true.
+   */
+  private async emitQueueUpdatesForArea(
+    area: string | null,
+    extraTicketId?: number,
+  ) {
+    if (!area) return;
+
+    const pendingIds =
+      await this.ticketsService.getPendingTicketIdsByArea(area);
+    const ids = new Set<number>(pendingIds);
+
+    if (extraTicketId) {
+      ids.add(extraTicketId);
+    }
+
+    for (const ticketId of ids) {
+      const queue = await this.ticketsService.getQueueStatus(ticketId);
+      this.ticketsGateway.emitTicketQueueUpdated(queue);
+    }
+  }
+
+  /**
    * POST /tickets
    * form-data:
    *  - subject (string)
@@ -63,8 +89,9 @@ export class TicketsController {
       const created = await this.ticketsService.create(body, user.id);
       if (!created) throw new Error('No se pudo crear el ticket');
 
-      // 🔔 Notificar a agentes/admin (por área si existe)
       this.ticketsGateway.emitNewTicket(created);
+      await this.emitQueueUpdatesForArea(created.area ?? null, created.id);
+
       return created;
     }
 
@@ -80,8 +107,8 @@ export class TicketsController {
     );
     if (!created) throw new Error('No se pudo crear el ticket con adjuntos');
 
-    // 🔔 Notificar a agentes/admin (por área si existe) -> SOLO 1 vez
     this.ticketsGateway.emitNewTicket(created);
+    await this.emitQueueUpdatesForArea(created.area ?? null, created.id);
 
     return created;
   }
@@ -105,12 +132,21 @@ export class TicketsController {
   }
 
   /**
-   * GET /tickets/:id
-   * ✅ Opción A: aquí debe venir "satisfaction" incluido desde el service
+   * GET /tickets/operations-dashboard
+   * Solo admin y super-admin
    */
-  @Get(':id')
-  async findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.ticketsService.findOne(id);
+  @Get('operations-dashboard')
+  async getOperationsDashboard(@Req() req: Request) {
+    const user = this.getCurrentUser(req);
+    return this.ticketsService.getOperationsDashboard(user);
+  }
+
+  /**
+   * GET /tickets/:id/queue-status
+   */
+  @Get(':id/queue-status')
+  async getQueueStatus(@Param('id', ParseIntPipe) id: number) {
+    return this.ticketsService.getQueueStatus(id);
   }
 
   /**
@@ -119,6 +155,14 @@ export class TicketsController {
   @Get(':id/messages')
   async getMessages(@Param('id', ParseIntPipe) id: number) {
     return this.ticketsService.getMessages(id);
+  }
+
+  /**
+   * GET /tickets/:id
+   */
+  @Get(':id')
+  async findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.ticketsService.findOne(id);
   }
 
   /**
@@ -176,13 +220,14 @@ export class TicketsController {
       body.note,
     );
 
-    // ✅ WS: notificar a todos los clientes del ticket + panel
     this.ticketsGateway.emitTicketStatusChanged({
       ticketId: id,
       status: updated.status,
       reason: 'MANUAL',
       changedAt: new Date().toISOString(),
     });
+
+    await this.emitQueueUpdatesForArea(updated.area ?? null, updated.id);
 
     return updated;
   }
@@ -208,7 +253,6 @@ export class TicketsController {
     const user = this.getCurrentUser(req);
     const updated = await this.ticketsService.openForAgent(id, user);
 
-    // ✅ opcional: si cambia estado, avisar por WS
     if (updated?.status) {
       this.ticketsGateway.emitTicketStatusChanged({
         ticketId: id,
@@ -218,12 +262,10 @@ export class TicketsController {
       });
     }
 
+    await this.emitQueueUpdatesForArea(updated.area ?? null, updated.id);
+
     return updated;
   }
-
-  // =========================================================
-  // ✅ SATISFACCIÓN (⭐ 1..5 + comentario opcional)
-  // =========================================================
 
   /**
    * POST /tickets/:id/satisfaction

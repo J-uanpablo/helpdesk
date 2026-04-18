@@ -168,8 +168,8 @@ async function loadAgentsAndAreas() {
 
   try {
     const [agentsRes, areasRes] = await Promise.all([
-      apiFetch('http://localhost:3000/users/agents'),
-      apiFetch('http://localhost:3000/support-areas'),
+      apiFetch('/users/agents'),
+      apiFetch('/support-areas'),
     ]);
 
     if (!agentsRes.ok) throw new Error('Error cargando agentes');
@@ -192,7 +192,7 @@ async function createAgent() {
   error.value = null;
 
   try {
-    const res = await apiFetch('http://localhost:3000/users/agents', {
+    const res = await apiFetch('/users/agents', {
       method: 'POST',
       body: JSON.stringify({
         name: newAgentForm.name.trim(),
@@ -269,7 +269,7 @@ async function updateAgent() {
       payload.password = editAgentForm.password;
     }
 
-    const res = await apiFetch(`http://localhost:3000/users/agents/${editAgentForm.id}`, {
+    const res = await apiFetch(`/users/agents/${editAgentForm.id}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     });
@@ -298,7 +298,7 @@ async function toggleAgentActive(a: AgentRow) {
   error.value = null;
 
   try {
-    const res = await apiFetch(`http://localhost:3000/users/agents/${a.id}`, {
+    const res = await apiFetch(`/users/agents/${a.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ isActive: !a.isActive }),
     });
@@ -335,7 +335,7 @@ async function confirmDeleteAgent() {
   error.value = null;
 
   try {
-    const res = await apiFetch(`http://localhost:3000/users/agents/${deleteAgentTarget.id}`, {
+    const res = await apiFetch(`/users/agents/${deleteAgentTarget.id}`, {
       method: 'DELETE',
     });
 

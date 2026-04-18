@@ -49,7 +49,7 @@
     <!-- CHAT -->
     <section class="flex min-h-0 flex-1 flex-col">
       <!-- CONTENIDO -->
-      <div class="min-h-0 flex-1 overflow-hidden px-6 py-4">
+      <div class="min-h-0 flex-1 overflow-hidden px-6 py-4 pb-24">
         <!-- Error -->
         <div
           v-if="error"
@@ -76,9 +76,62 @@
           </p>
         </div>
 
+        <!-- Ticket en fila -->
+        <div
+          v-if="isWaitingInQueue && queueStatus"
+          class="mb-4 rounded-2xl border px-6 py-5 text-center shadow-sm"
+          :style="{
+            background: 'var(--bg-panel)',
+            borderColor: 'rgba(59,130,246,0.20)',
+          }"
+        >
+          <p class="text-lg font-bold" :style="{ color: 'var(--text-main)' }">
+            ⏳ Estás en fila de atención
+          </p>
+
+          <p class="mt-2 text-sm" :style="{ color: 'var(--text-soft)' }">
+            Área:
+            <span class="font-semibold" :style="{ color: 'var(--text-main)' }">
+              {{ queueStatus.area || 'Sin área' }}
+            </span>
+          </p>
+
+          <div class="mt-4">
+            <div class="text-xs uppercase tracking-wider" :style="{ color: 'var(--text-soft)' }">
+              Tu posición actual
+            </div>
+            <div class="mt-1 text-4xl font-extrabold" style="color: #10b981">
+              #{{ queueStatus.queuePosition }}
+            </div>
+          </div>
+
+          <p class="mt-3 text-sm" :style="{ color: 'var(--text-main)' }">
+            Hay {{ queueStatus.waitingBefore }} ticket(s) antes que tú.
+          </p>
+
+          <p class="mt-3 text-xs" :style="{ color: 'var(--text-soft)' }">
+            Esta posición se actualiza automáticamente. El chat se habilitará cuando un agente tome
+            tu caso.
+          </p>
+        </div>
+
+        <!-- Ticket ya en atención -->
+        <div
+          v-if="queueStatus?.canChat && !isTicketClosed"
+          class="mb-4 rounded-lg border px-5 py-3 text-center"
+          style="border-color: rgba(16, 185, 129, 0.35); background: rgba(16, 185, 129, 0.08)"
+        >
+          <p class="mb-1 text-lg" style="color: #047857">
+            💬 <strong>Ya puedes escribir en el chat</strong>
+          </p>
+          <p class="text-sm" style="color: #065f46">
+            Un agente tomó tu solicitud. Ya puedes continuar la conversación.
+          </p>
+        </div>
+
         <!-- SCROLL REAL -->
-        <div ref="scrollContainer" class="scroll-area h-full min-h-0 overflow-y-auto pr-2 flex">
-          <div class="flex w-full flex-col justify-end">
+        <div ref="scrollContainer" class="scroll-area h-full min-h-0 overflow-y-auto pr-2">
+          <div class="min-h-full w-full">
             <ChatMessages
               :messages="messages"
               :currentUserId="currentUserId"
@@ -108,7 +161,7 @@
           v-model="newMessage"
           :pendingFiles="pendingFiles"
           :uploadError="uploadError"
-          :isTicketClosed="isTicketClosed"
+          :isTicketClosed="isComposerBlocked"
           :isSending="isSending"
           :formatBytes="formatBytes"
           @paste="onPaste"
@@ -251,6 +304,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, nextTick, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuth } from '../composables/useAuth';
+import { apiFetch } from '../lib/api';
 
 import TicketSatisfactionModal from '../components/tickets/TicketSatisfactionModal.vue';
 import ChatMessages from '../components/chat/ChatMessages.vue';
@@ -265,11 +319,24 @@ import { useNotificationSound } from '../composables/useNotificationSound';
 /* ===========================
    ROUTE / AUTH
 =========================== */
-const API_BASE = 'http://localhost:3000';
+const API_BASE = import.meta.env.VITE_API_URL ?? '';
 const route = useRoute();
 const router = useRouter();
 const { token, user, logout, initAuth } = useAuth();
 const ticketId = Number(route.params.id);
+
+const queueStatus = ref<{
+  ticketId: number;
+  area: string | null;
+  status: string;
+  queuePosition: number;
+  waitingBefore: number;
+  totalPendingInArea: number;
+  canChat: boolean;
+} | null>(null);
+
+const isLoadingQueue = ref(false);
+let queueInterval: number | null = null;
 
 /* ===========================
    LOGOUT
@@ -292,6 +359,26 @@ function exitChat() {
   router.push('/cliente');
 }
 
+async function loadQueueStatus() {
+  if (!ticketId || Number.isNaN(ticketId)) return;
+
+  isLoadingQueue.value = true;
+
+  try {
+    const res = await apiFetch(`/tickets/${ticketId}/queue-status`);
+
+    if (!res.ok) {
+      throw new Error(`Error ${res.status} al consultar la fila`);
+    }
+
+    queueStatus.value = await res.json();
+  } catch (err) {
+    console.error('Error cargando queue-status:', err);
+  } finally {
+    isLoadingQueue.value = false;
+  }
+}
+
 /* ===========================
    SOCKET + DATA
 =========================== */
@@ -312,6 +399,13 @@ const {
 =========================== */
 const currentUserId = computed(() => user.value?.id ?? 0);
 const isTicketClosed = computed(() => ticket.value?.status === 'CLOSED');
+const isWaitingInQueue = computed(() => {
+  return !isTicketClosed.value && queueStatus.value?.canChat === false;
+});
+const isComposerBlocked = computed(() => {
+  return isTicketClosed.value || isWaitingInQueue.value;
+});
+
 const subjectToShow = computed(() => ticket.value?.subject || ticket.value?.title || 'Sin asunto');
 
 const ticketStatusLabel = computed(() => {
@@ -359,7 +453,7 @@ const {
 =========================== */
 const newMessage = ref('');
 function insertTemplate(text: string) {
-  newMessage.value = (newMessage.value ? newMessage.value + '\n' : '') + text;
+  newMessage.value = (newMessage.value ? `${newMessage.value}\n` : '') + text;
 }
 
 /* ===========================
@@ -394,7 +488,13 @@ const {
   isImage,
   fileUrl,
   download: async (url, name) => {
-    await downloadAttachment({ id: 0, filename: name, path: url, size: 0, createdAt: '' } as any);
+    await downloadAttachment({
+      id: 0,
+      filename: name,
+      path: url,
+      size: 0,
+      createdAt: '',
+    } as any);
   },
 });
 
@@ -406,9 +506,10 @@ const { init: initNotificationAudio, play: playNotification } = useNotificationS
 );
 
 /* ===========================
-   Scroll siempre abajo
+   Scroll
 =========================== */
 const scrollContainer = ref<HTMLElement | null>(null);
+
 function scrollToBottom() {
   nextTick(() => {
     if (scrollContainer.value) {
@@ -417,11 +518,19 @@ function scrollToBottom() {
   });
 }
 
+function scrollToTop() {
+  nextTick(() => {
+    if (scrollContainer.value) {
+      scrollContainer.value.scrollTop = 0;
+    }
+  });
+}
+
 /* ===========================
    Enviar
 =========================== */
 async function handleSend() {
-  if (isTicketClosed.value || isSending.value) return;
+  if (isComposerBlocked.value || isSending.value) return;
 
   const text = newMessage.value.trim();
 
@@ -477,25 +586,41 @@ onMounted(async () => {
 
   await nextTick();
   await loadTicket();
+  await loadQueueStatus();
 
   setupSocket({
     onHistoryLoaded: () => {
       hasInitializedMessages.value = true;
       lastMessagesCount.value = messages.value.length;
-      scrollToBottom();
+      scrollToTop();
     },
     onIncomingMessage: (isFromMe: boolean) => {
       if (hasInitializedMessages.value && !isFromMe) playNotification();
       scrollToBottom();
     },
+    onQueueUpdated: (payload: any) => {
+      if (payload?.ticketId === ticketId) {
+        queueStatus.value = payload;
+      }
+    },
   });
 
+  // queueInterval = window.setInterval(() => {
+  //   void loadQueueStatus();
+  // }, 1000);
+
   loadDraft();
-  scrollToBottom();
+  scrollToTop();
 });
 
 onBeforeUnmount(() => {
   saveDraft();
+
+  if (queueInterval) {
+    clearInterval(queueInterval);
+    queueInterval = null;
+  }
+
   window.removeEventListener('keydown', onGlobalKeydown);
 });
 
@@ -508,7 +633,7 @@ watch(
     if (!hasInitializedMessages.value) {
       hasInitializedMessages.value = true;
       lastMessagesCount.value = len;
-      scrollToBottom();
+      scrollToTop();
       return;
     }
 
@@ -523,13 +648,21 @@ watch(
   () => newMessage.value,
   () => saveDraft()
 );
+
 watch(
   () => pendingFiles.value.length,
   () => saveDraft()
 );
+
+watch(
+  () => ticket.value?.status,
+  () => {
+    void loadQueueStatus();
+  }
+);
 </script>
+
 <style scoped>
-/* Scroll del área de mensajes */
 .scroll-area::-webkit-scrollbar {
   width: 10px;
 }

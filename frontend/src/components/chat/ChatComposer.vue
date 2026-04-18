@@ -164,7 +164,7 @@ interface QuickReply {
   content: string;
   isActive?: boolean;
 }
-
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? '';
 const props = defineProps<{
   authToken: string;
 
@@ -200,7 +200,7 @@ async function fetchTemplates() {
   if (!jwt) return;
 
   try {
-    const res = await fetch('http://localhost:3000/quick-replies', {
+    const res = await fetch(`${API_BASE_URL}/quick-replies`, {
       headers: {
         Authorization: `Bearer ${jwt}`,
       },

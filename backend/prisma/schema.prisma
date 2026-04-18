@@ -90,32 +90,30 @@ model TicketAttachment {
 }
 
 model Ticket {
-  id           Int                 @id @default(autoincrement())
-  subject      String
-  description  String
-  area         String? // área a la que va dirigido el ticket
-  status       TicketStatus        @default(PENDING)
-  priority     TicketPriority      @default(MEDIUM)
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
-  attachments  TicketAttachment[]
-  satisfaction TicketSatisfaction?
+  id             Int                 @id @default(autoincrement())
+  subject        String
+  description    String
+  area           String?
+  status         TicketStatus        @default(PENDING)
+  priority       TicketPriority      @default(MEDIUM)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  attachments    TicketAttachment[]
+  satisfaction   TicketSatisfaction?
 
-  // Usuario que creó el ticket
-  createdById Int
-  createdBy   User @relation("TicketCreatedBy", fields: [createdById], references: [id])
-
-  // Usuario asignado (agente de soporte) - opcional
-  assignedToId Int?
-  assignedTo   User? @relation("TicketAssignedTo", fields: [assignedToId], references: [id])
-
-  // Historial de cambios del ticket
-  history  TicketHistory[]
-  messages TicketMessage[]
-
+  assignedAt     DateTime?
   resolvedAt     DateTime?
   closedAt       DateTime?
-  lastActivityAt DateTime? // última actividad del chat (mensajes / estado)
+  lastActivityAt DateTime?
+
+  createdById    Int
+  createdBy      User @relation("TicketCreatedBy", fields: [createdById], references: [id])
+
+  assignedToId   Int?
+  assignedTo     User? @relation("TicketAssignedTo", fields: [assignedToId], references: [id])
+
+  history        TicketHistory[]
+  messages       TicketMessage[]
 }
 
 model TicketSatisfaction {

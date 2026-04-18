@@ -7,7 +7,7 @@ const loading = ref(false);
 const message = ref<string | null>(null);
 const error = ref<string | null>(null);
 
-const API_URL = 'http://localhost:3000';
+const API_URL = import.meta.env.VITE_API_URL ?? '';
 
 async function handleSubmit() {
   error.value = null;

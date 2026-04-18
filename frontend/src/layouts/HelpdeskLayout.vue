@@ -27,7 +27,7 @@ import SupportReportModal from '../components/reports/SupportReportModal.vue';
 import { useAuth } from '../composables/useAuth';
 import { useUiBus } from '../composables/useUiBus';
 
-const API_BASE = 'http://localhost:3000';
+const API_BASE = import.meta.env.VITE_API_URL ?? '';
 const { user, token } = useAuth();
 const { activeModal, close } = useUiBus();
 

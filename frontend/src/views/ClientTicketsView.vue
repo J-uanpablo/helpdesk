@@ -123,7 +123,7 @@ async function loadMyTickets() {
 
   isLoading.value = true;
   try {
-    const res = await apiFetch('http://localhost:3000/tickets/my');
+    const res = await apiFetch('/tickets/my');
 
     if (!res.ok) {
       throw new Error(`Error ${res.status} al cargar tus tickets`);

@@ -339,7 +339,7 @@ async function changePassword() {
   isChangingPassword.value = true;
 
   try {
-    const res = await apiFetch('http://localhost:3000/auth/change-password', {
+    const res = await apiFetch('/auth/change-password', {
       method: 'PATCH',
       body: JSON.stringify({
         currentPassword,

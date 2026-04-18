@@ -1,7 +1,7 @@
 <!-- src/views/HelpdeskPanel.vue -->
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { useTicketChat } from '../composables/useTicketChat';
 import { useAuth } from '../composables/useAuth';
 import { io, Socket } from 'socket.io-client';
@@ -51,7 +51,7 @@ async function downloadSupportReport() {
     params.set('area', reportArea.value);
   }
 
-  const url = `http://localhost:3000/reports/support-performance.xlsx?${params.toString()}`;
+  const url = `${API_BASE}/reports/support-performance.xlsx?${params.toString()}`;
 
   const res = await apiFetch(url);
 
@@ -83,7 +83,7 @@ async function downloadSupportReport() {
 /* ===========================
    0) CONFIG
 =========================== */
-const API_BASE = 'http://localhost:3000';
+const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
 function getJwt(): string {
   return (token.value ?? '').trim();
@@ -111,6 +111,7 @@ function insertTemplate(text: string) {
    2) ROUTER + AUTH
 =========================== */
 const router = useRouter();
+const route = useRoute();
 const { token, user, initAuth } = useAuth();
 
 const isSuperAdmin = computed(() => (user.value?.roles || []).includes('super-admin'));
@@ -131,27 +132,68 @@ const myId = computed<number | null>(() => {
 const notificationAudio = new Audio('/sounds/Sonido_Notificacion.mp3');
 notificationAudio.preload = 'auto';
 
+const newTicketAudio = new Audio('/sounds/Nuevo_Ticket.mp3');
+newTicketAudio.preload = 'auto';
+
+const audioUnlocked = ref(false);
+
+async function unlockAudio() {
+  if (audioUnlocked.value) return;
+
+  try {
+    notificationAudio.muted = true;
+    newTicketAudio.muted = true;
+
+    await notificationAudio.play().catch(() => {});
+    await newTicketAudio.play().catch(() => {});
+
+    notificationAudio.pause();
+    newTicketAudio.pause();
+
+    notificationAudio.currentTime = 0;
+    newTicketAudio.currentTime = 0;
+
+    notificationAudio.muted = false;
+    newTicketAudio.muted = false;
+
+    audioUnlocked.value = true;
+    console.log('🔊 Audio desbloqueado');
+  } catch (e) {
+    console.warn('No se pudo desbloquear audio todavía:', e);
+  }
+}
+
 function playNotification() {
+  if (!audioUnlocked.value) return;
+
   try {
     notificationAudio.currentTime = 0;
-    void notificationAudio.play();
+    notificationAudio.play().catch(e => {
+      console.error('No se pudo reproducir el sonido de notificación:', e);
+    });
   } catch (e) {
     console.error('No se pudo reproducir el sonido de notificación:', e);
   }
 }
 
-const newTicketAudio = new Audio('/sounds/Nuevo_Ticket.mp3');
-newTicketAudio.preload = 'auto';
-
 function playNewTicket() {
+  if (!audioUnlocked.value) return;
+
   try {
     newTicketAudio.currentTime = 0;
-    void newTicketAudio.play();
+    newTicketAudio.play().catch(e => {
+      console.error('No se pudo reproducir Nuevo_Ticket.mp3:', e);
+    });
   } catch (e) {
-    console.error('No se pudo reproducir Nuevo_Ticket.mp3', e);
+    console.error('No se pudo reproducir Nuevo_Ticket.mp3:', e);
   }
 }
 
+function handleFirstUserInteraction() {
+  void unlockAudio();
+  window.removeEventListener('click', handleFirstUserInteraction);
+  window.removeEventListener('keydown', handleFirstUserInteraction);
+}
 /* ===========================
    4) SOCKET NUEVOS TICKETS (1 solo)
 =========================== */
@@ -182,7 +224,8 @@ function connectPanelSocket() {
   s.on('disconnect', () => console.log('🔴 Panel socket desconectado'));
   s.on('connect_error', err => console.error('⚠️ Panel socket error:', err));
 
-  s.on('new_ticket', async () => {
+  s.on('new_ticket', async payload => {
+    console.log('🎟️ Evento new_ticket recibido:', payload);
     playNewTicket();
     await loadTickets();
   });
@@ -197,7 +240,7 @@ const statusError = ref<string | null>(null);
 const STATUS_OPTIONS = [
   { value: 'PENDING', label: 'ABIERTO' },
   { value: 'IN_PROGRESS', label: 'EN PROGRESO' },
-  { value: 'RESOLVED', label: 'RESUELTO' },
+  // { value: 'RESOLVED', label: 'RESUELTO' },
   { value: 'CLOSED', label: 'CERRADO' },
 ];
 
@@ -205,7 +248,7 @@ const STATUS_FILTERS = [
   { value: 'ALL', label: 'Todos' },
   { value: 'PENDING', label: 'Abiertos' },
   { value: 'IN_PROGRESS', label: 'En progreso' },
-  { value: 'RESOLVED', label: 'Resueltos' },
+  // { value: 'RESOLVED', label: 'Resueltos' },
   { value: 'CLOSED', label: 'Cerrados' },
 ] as const;
 
@@ -460,11 +503,26 @@ const filteredTickets = computed(() => {
   }
 
   return list.sort((a, b) => {
-    const ta = getTicketActivityTimestamp(a);
-    const tb = getTicketActivityTimestamp(b);
-    const va = ta ? new Date(ta).getTime() : 0;
-    const vb = tb ? new Date(tb).getTime() : 0;
-    return vb - va;
+    // 1. CERRADOS siempre al final
+    if (a.status === 'CLOSED' && b.status !== 'CLOSED') return 1;
+    if (a.status !== 'CLOSED' && b.status === 'CLOSED') return -1;
+
+    // 2. Dentro de CERRADOS → más recientes primero (LIFO)
+    if (a.status === 'CLOSED' && b.status === 'CLOSED') {
+      const va = a.closedAt ? new Date(a.closedAt).getTime() : 0;
+      const vb = b.closedAt ? new Date(b.closedAt).getTime() : 0;
+      return vb - va; // 👈 más reciente arriba
+    }
+
+    // 3. SIN ASIGNAR arriba
+    if (!a.assignedToId && b.assignedToId) return -1;
+    if (a.assignedToId && !b.assignedToId) return 1;
+
+    // 4. FIFO para activos (por fecha de creación)
+    const va = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const vb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+
+    return va - vb;
   });
 });
 
@@ -977,6 +1035,38 @@ async function handleSelectTicket(ticket: TicketSummary) {
 
   await ensureInProgress(ticket.id);
 }
+function openTicketFromQuery() {
+  const rawId = route.query.ticketId;
+  const ticketId = Number(rawId);
+
+  if (!ticketId || Number.isNaN(ticketId)) return;
+  if (!tickets.value.length) return;
+
+  const found = tickets.value.find(t => Number(t.id) === ticketId);
+  if (!found) return;
+
+  void handleSelectTicket(found);
+
+  router.replace({ name: 'soporte' });
+}
+
+watch(
+  () => tickets.value.length,
+  async len => {
+    if (!len) return;
+    await nextTick();
+    openTicketFromQuery();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => route.query.ticketId,
+  async () => {
+    await nextTick();
+    openTicketFromQuery();
+  }
+);
 
 /* ==========================================================
    16) ARCHIVOS: urls / bytes / isImage
@@ -1318,25 +1408,25 @@ let refreshId: number | null = null;
 /* ===========================
    LIFECYCLE
 =========================== */
+
 onMounted(async () => {
   initAuth();
   await nextTick();
 
-  // preload audios
   try {
     notificationAudio.load();
     newTicketAudio.load();
   } catch (_) {}
 
-  // inicial si ya hay token
-  if (getJwt()) {
-    connectPanelSocket();
-    await loadSupportAreas();
-    await loadTickets();
+  window.addEventListener('click', handleFirstUserInteraction, { once: true });
+  window.addEventListener('keydown', handleFirstUserInteraction, { once: true });
 
-    // precarga quick replies
-    void fetchQuickReplies();
-  }
+  // if (getJwt()) {
+  //   connectPanelSocket();
+  //   await loadSupportAreas();
+  //   await loadTickets();
+  //   void fetchQuickReplies();
+  // }
 
   refreshId = window.setInterval(() => {
     if (getJwt()) loadTickets();
@@ -1346,13 +1436,14 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  // ✅ si hay chat abierto, guardar borrador antes de salir de la vista
   if (selectedTicketId.value) {
     saveDraft(selectedTicketId.value);
   }
 
   if (refreshId !== null) clearInterval(refreshId);
   window.removeEventListener('keydown', handleKeydown);
+  window.removeEventListener('click', handleFirstUserInteraction);
+  window.removeEventListener('keydown', handleFirstUserInteraction);
 
   disconnectPanelSocket();
 
@@ -1365,7 +1456,7 @@ onUnmounted(() => {
 <template>
   <!-- ROOT -->
   <div
-    class="flex-1 min-h-0 flex overflow-hidden rounded-xl shadow-lg border"
+    class="flex-1 min-h-0 flex overflow-hidden shadow-lg border"
     :style="{
       background: 'var(--bg-panel)',
       borderColor: 'var(--border-main)',

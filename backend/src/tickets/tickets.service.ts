@@ -38,7 +38,7 @@ export class TicketsService {
   // HELPERS EMAIL
   // ============================================================
   private getAppUrl() {
-    return process.env.APP_URL || 'http://localhost:5173';
+    return process.env.APP_URL || 'http://192.168.16.33:5173';
   }
 
   /**
@@ -183,6 +183,87 @@ export class TicketsService {
   }
 
   // ============================================================
+  // NUEVO: ESTADO DE COLA POR ÁREA
+  // ============================================================
+  async getQueueStatus(ticketId: number) {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id: ticketId },
+      select: {
+        id: true,
+        area: true,
+        status: true,
+        createdAt: true,
+      },
+    });
+
+    if (!ticket) {
+      throw new NotFoundException('Ticket no encontrado');
+    }
+
+    // Si ya está siendo atendido, el cliente ya puede escribir
+    if (ticket.status === TicketStatus.IN_PROGRESS) {
+      const totalPendingInArea = await this.prisma.ticket.count({
+        where: {
+          area: ticket.area,
+          status: TicketStatus.PENDING,
+        },
+      });
+
+      return {
+        ticketId: ticket.id,
+        area: ticket.area,
+        status: ticket.status,
+        queuePosition: 0,
+        waitingBefore: 0,
+        totalPendingInArea,
+        canChat: true,
+      };
+    }
+
+    // Si ya no está en cola
+    if (
+      ticket.status === TicketStatus.RESOLVED ||
+      ticket.status === TicketStatus.CLOSED
+    ) {
+      return {
+        ticketId: ticket.id,
+        area: ticket.area,
+        status: ticket.status,
+        queuePosition: 0,
+        waitingBefore: 0,
+        totalPendingInArea: 0,
+        canChat: false,
+      };
+    }
+
+    // Cola: solo PENDING del mismo área, por orden de creación
+    const pendingTickets = await this.prisma.ticket.findMany({
+      where: {
+        area: ticket.area,
+        status: TicketStatus.PENDING,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    const index = pendingTickets.findIndex((t) => t.id === ticket.id);
+
+    return {
+      ticketId: ticket.id,
+      area: ticket.area,
+      status: ticket.status,
+      queuePosition: index >= 0 ? index + 1 : 0,
+      waitingBefore: index >= 0 ? index : 0,
+      totalPendingInArea: pendingTickets.length,
+      canChat: false,
+    };
+  }
+
+  // ============================================================
   // 1) CREAR TICKET (CLIENTE) SIN ARCHIVOS
   // ============================================================
   async create(data: any, userId: number) {
@@ -234,7 +315,12 @@ export class TicketsService {
       assignedToId: ticket.assignedToId ?? null,
     });
 
-    return ticket;
+    const queue = await this.getQueueStatus(ticket.id);
+
+    return {
+      ...ticket,
+      queue,
+    };
   }
 
   // ============================================================
@@ -316,7 +402,12 @@ export class TicketsService {
       assignedToId: result.assignedToId ?? null,
     });
 
-    return result;
+    const queue = await this.getQueueStatus(result.id);
+
+    return {
+      ...result,
+      queue,
+    };
   }
 
   // ============================================================
@@ -384,7 +475,6 @@ export class TicketsService {
     const t = await this.prisma.ticket.findUnique({ where: { id: ticketId } });
     if (!t) throw new NotFoundException('Ticket no encontrado');
 
-    // Permisos
     if (!this.isAdmin(user) && !this.isSupport(user)) {
       throw new ForbiddenException('No autorizado');
     }
@@ -399,17 +489,20 @@ export class TicketsService {
 
     const now = new Date();
 
-    // ✅ Actualización + timestamps
     const dataToUpdate: any = {
       status,
       lastActivityAt: now,
     };
 
-    if (status === TicketStatus.RESOLVED) {
+    if (status === TicketStatus.IN_PROGRESS && !t.assignedAt) {
+      dataToUpdate.assignedAt = now;
+    }
+
+    if (status === TicketStatus.RESOLVED && !t.resolvedAt) {
       dataToUpdate.resolvedAt = now;
     }
 
-    if (status === TicketStatus.CLOSED) {
+    if (status === TicketStatus.CLOSED && !t.closedAt) {
       dataToUpdate.closedAt = now;
     }
 
@@ -418,7 +511,6 @@ export class TicketsService {
       data: dataToUpdate,
     });
 
-    // ✅ Si quedó CERRADO, enviar correo con transcript
     if (status === TicketStatus.CLOSED) {
       await this.notifyTicketClosed({
         ticketId,
@@ -439,6 +531,28 @@ export class TicketsService {
   }) {
     const { ticketId, content, senderId } = data;
     if (!content?.trim()) throw new BadRequestException('Mensaje vacío');
+
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id: ticketId },
+      select: {
+        id: true,
+        status: true,
+        createdById: true,
+        assignedToId: true,
+      },
+    });
+
+    if (!ticket) {
+      throw new NotFoundException('Ticket no encontrado');
+    }
+
+    const isClient = ticket.createdById === senderId;
+
+    if (isClient && ticket.status !== TicketStatus.IN_PROGRESS) {
+      throw new BadRequestException(
+        'Tu ticket sigue en fila de atención. Aún no puedes escribir.',
+      );
+    }
 
     const now = new Date();
 
@@ -488,6 +602,28 @@ export class TicketsService {
     if (!content?.trim() && !file) {
       throw new BadRequestException(
         'Debes enviar contenido o adjuntar un archivo',
+      );
+    }
+
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id: ticketId },
+      select: {
+        id: true,
+        status: true,
+        createdById: true,
+        assignedToId: true,
+      },
+    });
+
+    if (!ticket) {
+      throw new NotFoundException('Ticket no encontrado');
+    }
+
+    const isClient = ticket.createdById === senderId;
+
+    if (isClient && ticket.status !== TicketStatus.IN_PROGRESS) {
+      throw new BadRequestException(
+        'Tu ticket sigue en fila de atención. Aún no puedes escribir.',
       );
     }
 
@@ -590,6 +726,7 @@ export class TicketsService {
       status: t.status,
       createdAt: t.createdAt,
       updatedAt: t.updatedAt,
+      closedAt: t.closedAt,
       area: t.area,
       requesterName: t.createdBy?.name ?? null,
       clientCargo: t.createdBy?.cargo ?? null,
@@ -618,6 +755,7 @@ export class TicketsService {
       where: { id: ticketId },
       data: {
         assignedToId: user.id,
+        assignedAt: t.assignedAt ?? now,
         lastActivityAt: now,
       },
     });
@@ -643,12 +781,19 @@ export class TicketsService {
     const next: any = {};
     const now = new Date();
 
-    if (!t.assignedToId) next.assignedToId = user.id;
+    if (!t.assignedToId) {
+      next.assignedToId = user.id;
+    }
+
+    if (!t.assignedAt) {
+      next.assignedAt = now;
+    }
 
     if (t.status === TicketStatus.PENDING) {
       next.status = TicketStatus.IN_PROGRESS;
-      next.lastActivityAt = now;
     }
+
+    next.lastActivityAt = now;
 
     if (Object.keys(next).length === 0) return t;
 
@@ -729,5 +874,378 @@ export class TicketsService {
       where: { ticketId },
       select: { rating: true, comment: true, createdAt: true },
     });
+  }
+  async getPendingTicketIdsByArea(area: string | null) {
+    if (!area) return [];
+
+    const rows = await this.prisma.ticket.findMany({
+      where: {
+        area,
+        status: TicketStatus.PENDING,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    return rows.map((r) => r.id);
+  }
+  /* ============================================================
+   DASHBOARD OPERATIVO (admin / super-admin)
+============================================================ */
+  async getOperationsDashboard(currentUser: CurrentUser) {
+    if (!this.isAdmin(currentUser)) {
+      throw new ForbiddenException('No autorizado');
+    }
+
+    const dbUser = await this.prisma.user.findUnique({
+      where: { id: currentUser.id },
+      select: {
+        id: true,
+        name: true,
+        supportArea: true,
+      },
+    });
+
+    const isSuper = this.isSuperAdmin(currentUser);
+    const scopeArea = isSuper ? null : (dbUser?.supportArea ?? null);
+
+    if (!isSuper && !scopeArea) {
+      throw new BadRequestException(
+        'Tu usuario admin no tiene un área de soporte asignada.',
+      );
+    }
+
+    const baseWhere = scopeArea ? { area: scopeArea } : {};
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    // =========================
+    // SUMMARY
+    // =========================
+    const [pendingCount, inProgressCount, closedTodayCount] = await Promise.all(
+      [
+        this.prisma.ticket.count({
+          where: {
+            ...baseWhere,
+            status: TicketStatus.PENDING,
+          },
+        }),
+        this.prisma.ticket.count({
+          where: {
+            ...baseWhere,
+            status: TicketStatus.IN_PROGRESS,
+          },
+        }),
+        this.prisma.ticket.count({
+          where: {
+            ...baseWhere,
+            status: TicketStatus.CLOSED,
+            closedAt: {
+              gte: startOfToday,
+            },
+          },
+        }),
+      ],
+    );
+
+    // agentes activos = agentes con al menos un ticket en progreso
+    const activeAssignments = await this.prisma.ticket.groupBy({
+      by: ['assignedToId'],
+      where: {
+        ...baseWhere,
+        status: TicketStatus.IN_PROGRESS,
+        assignedToId: { not: null },
+      },
+      _count: {
+        assignedToId: true,
+      },
+    });
+
+    const activeAgentIds = activeAssignments
+      .map((r) => r.assignedToId)
+      .filter((v): v is number => typeof v === 'number');
+
+    const activeAgentsCount = activeAgentIds.length;
+
+    // =========================
+    // COLA POR ÁREA
+    // =========================
+    const pendingByArea = await this.prisma.ticket.groupBy({
+      by: ['area'],
+      where: {
+        status: TicketStatus.PENDING,
+        ...(scopeArea ? { area: scopeArea } : {}),
+      },
+      _count: {
+        _all: true,
+      },
+    });
+
+    const inProgressByArea = await this.prisma.ticket.groupBy({
+      by: ['area'],
+      where: {
+        status: TicketStatus.IN_PROGRESS,
+        ...(scopeArea ? { area: scopeArea } : {}),
+      },
+      _count: {
+        _all: true,
+      },
+    });
+
+    const areaMap = new Map<
+      string,
+      { area: string; pending: number; inProgress: number }
+    >();
+
+    for (const row of pendingByArea) {
+      const area = row.area || 'SIN ÁREA';
+      areaMap.set(area, {
+        area,
+        pending: row._count._all,
+        inProgress: 0,
+      });
+    }
+
+    for (const row of inProgressByArea) {
+      const area = row.area || 'SIN ÁREA';
+      const existing = areaMap.get(area);
+      if (existing) {
+        existing.inProgress = row._count._all;
+      } else {
+        areaMap.set(area, {
+          area,
+          pending: 0,
+          inProgress: row._count._all,
+        });
+      }
+    }
+
+    const queuesByArea = Array.from(areaMap.values()).sort((a, b) => {
+      if (b.pending !== a.pending) return b.pending - a.pending;
+      return a.area.localeCompare(b.area);
+    });
+
+    // =========================
+    // TICKETS EN FILA
+    // =========================
+    const pendingTicketsRaw = await this.prisma.ticket.findMany({
+      where: {
+        ...baseWhere,
+        status: TicketStatus.PENDING,
+      },
+      orderBy: [{ area: 'asc' }, { createdAt: 'asc' }],
+      include: {
+        createdBy: {
+          select: {
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    const queueCounterByArea = new Map<string, number>();
+
+    const pendingTickets = pendingTicketsRaw.map((t) => {
+      const area = t.area || 'SIN ÁREA';
+      const current = (queueCounterByArea.get(area) ?? 0) + 1;
+      queueCounterByArea.set(area, current);
+
+      return {
+        id: t.id,
+        subject: t.subject,
+        requesterName: t.createdBy?.name ?? 'Sin nombre',
+        requesterEmail: t.createdBy?.email ?? null,
+        area: t.area,
+        queuePosition: current,
+        createdAt: t.createdAt,
+        waitMinutes: Math.max(
+          0,
+          Math.floor((Date.now() - new Date(t.createdAt).getTime()) / 60000),
+        ),
+      };
+    });
+
+    // =========================
+    // TICKETS EN PROGRESO
+    // =========================
+    const inProgressTickets = await this.prisma.ticket.findMany({
+      where: {
+        ...baseWhere,
+        status: TicketStatus.IN_PROGRESS,
+      },
+      orderBy: [{ updatedAt: 'desc' }],
+      include: {
+        createdBy: {
+          select: {
+            name: true,
+            email: true,
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            name: true,
+            supportArea: true,
+          },
+        },
+      },
+    });
+
+    // =========================
+    // TICKETS CERRADOS RECIENTES + CALIFICACIÓN
+    // =========================
+    const closedTickets = await this.prisma.ticket.findMany({
+      where: {
+        ...baseWhere,
+        status: TicketStatus.CLOSED,
+      },
+      orderBy: [{ closedAt: 'desc' }, { updatedAt: 'desc' }],
+      take: 20,
+      include: {
+        createdBy: {
+          select: {
+            name: true,
+            email: true,
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            name: true,
+            supportArea: true,
+          },
+        },
+        satisfaction: {
+          select: {
+            rating: true,
+            comment: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    // =========================
+    // AGENTES DEL ALCANCE
+    // =========================
+    const agents = await this.prisma.user.findMany({
+      where: {
+        ...(scopeArea ? { supportArea: scopeArea } : {}),
+        isActive: true,
+        roles: {
+          some: {
+            role: {
+              name: {
+                in: ['support', 'admin', 'super-admin'],
+              },
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        supportArea: true,
+        roles: {
+          select: {
+            role: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ name: 'asc' }],
+    });
+
+    const activeTicketsByAgent = await this.prisma.ticket.groupBy({
+      by: ['assignedToId'],
+      where: {
+        ...(scopeArea ? { area: scopeArea } : {}),
+        status: TicketStatus.IN_PROGRESS,
+        assignedToId: { not: null },
+      },
+      _count: {
+        _all: true,
+      },
+    });
+
+    const activeByAgentMap = new Map<number, number>();
+    for (const row of activeTicketsByAgent) {
+      if (row.assignedToId) {
+        activeByAgentMap.set(row.assignedToId, row._count._all);
+      }
+    }
+
+    const agentsWithStatus = agents.map((a) => {
+      const activeTickets = activeByAgentMap.get(a.id) ?? 0;
+
+      return {
+        id: a.id,
+        name: a.name,
+        email: a.email,
+        area: a.supportArea,
+        roles: a.roles.map((r) => r.role.name),
+        activeTickets,
+        statusLabel: activeTickets > 0 ? 'ATENDIENDO' : 'LIBRE',
+      };
+    });
+
+    return {
+      scope: isSuper ? 'GLOBAL' : 'AREA',
+      area: scopeArea,
+      summary: {
+        pending: pendingCount,
+        inProgress: inProgressCount,
+        closedToday: closedTodayCount,
+        activeAgents: activeAgentsCount,
+      },
+      queuesByArea,
+      pendingTickets,
+      inProgressTickets: inProgressTickets.map((t) => ({
+        id: t.id,
+        subject: t.subject,
+        requesterName: t.createdBy?.name ?? 'Sin nombre',
+        requesterEmail: t.createdBy?.email ?? null,
+        assignedToId: t.assignedTo?.id ?? null,
+        assignedToName: t.assignedTo?.name ?? 'Sin asignar',
+        area: t.area,
+        updatedAt: t.updatedAt,
+        createdAt: t.createdAt,
+        attentionMinutes: t.assignedAt
+          ? Math.max(
+              0,
+              Math.floor(
+                (Date.now() - new Date(t.assignedAt).getTime()) / 60000,
+              ),
+            )
+          : 0,
+      })),
+      closedTickets: closedTickets.map((t) => ({
+        id: t.id,
+        subject: t.subject,
+        requesterName: t.createdBy?.name ?? 'Sin nombre',
+        requesterEmail: t.createdBy?.email ?? null,
+        assignedToName: t.assignedTo?.name ?? 'Sin asignar',
+        area: t.area,
+        closedAt: t.closedAt,
+        satisfaction: t.satisfaction
+          ? {
+              rating: t.satisfaction.rating,
+              comment: t.satisfaction.comment,
+              createdAt: t.satisfaction.createdAt,
+            }
+          : null,
+      })),
+      agents: agentsWithStatus,
+    };
   }
 }

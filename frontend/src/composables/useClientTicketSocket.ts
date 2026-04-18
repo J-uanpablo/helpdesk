@@ -32,6 +32,16 @@ interface TicketMessage {
   attachments?: TicketAttachment[];
 }
 
+interface TicketQueueStatus {
+  ticketId: number;
+  area: string | null;
+  status: string;
+  queuePosition: number;
+  waitingBefore: number;
+  totalPendingInArea: number;
+  canChat: boolean;
+}
+
 export function useClientTicketSocket(opts: {
   apiBase: string;
   ticketId: number;
@@ -76,6 +86,7 @@ export function useClientTicketSocket(opts: {
   function setupSocket(hooks?: {
     onHistoryLoaded?: () => void;
     onIncomingMessage?: (isFromMe: boolean) => void;
+    onQueueUpdated?: (payload: TicketQueueStatus) => void;
   }) {
     const jwt = (token.value ?? '').trim();
     if (!jwt) return;
@@ -104,6 +115,12 @@ export function useClientTicketSocket(opts: {
         if (status === 'CLOSED' && !ticket.value.satisfaction) {
           showSatisfaction.value = true;
         }
+      }
+    });
+
+    s.on('ticket_queue_updated', (payload: TicketQueueStatus) => {
+      if (payload?.ticketId === ticketId) {
+        hooks?.onQueueUpdated?.(payload);
       }
     });
 

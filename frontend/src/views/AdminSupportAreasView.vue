@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useAuth } from '../composables/useAuth';
+import { apiFetch } from '../lib/api';
 
 interface SupportArea {
   id: number;
@@ -17,7 +18,6 @@ const areas = ref<SupportArea[]>([]);
 const isLoading = ref(false);
 const error = ref<string | null>(null);
 
-// menú de acciones
 const openMenuId = ref<number | null>(null);
 
 function toggleMenu(id: number) {
@@ -28,11 +28,9 @@ function closeMenu() {
   openMenuId.value = null;
 }
 
-// filtros
 const searchText = ref('');
 const onlyActive = ref(false);
 
-// modal create / edit
 const showModal = ref(false);
 const editingArea = ref<SupportArea | null>(null);
 const isSaving = ref(false);
@@ -43,11 +41,9 @@ const form = ref({
   isActive: true,
 });
 
-// modal delete
 const deleteTarget = ref<SupportArea | null>(null);
 const isDeleting = ref(false);
 
-// computed
 const filteredAreas = computed(() => {
   const text = searchText.value.trim().toLowerCase();
 
@@ -58,7 +54,6 @@ const filteredAreas = computed(() => {
   });
 });
 
-// paginación
 const page = ref(1);
 const pageSize = 8;
 
@@ -77,7 +72,6 @@ function goToPage(newPage: number) {
   page.value = newPage;
 }
 
-// reset página cuando cambien filtros
 watch([searchText, onlyActive], () => {
   page.value = 1;
 });
@@ -86,7 +80,6 @@ const totalAreas = computed(() => areas.value.length);
 const activeAreas = computed(() => areas.value.filter(a => a.isActive).length);
 const inactiveAreas = computed(() => areas.value.filter(a => !a.isActive).length);
 
-// helpers
 function formatDate(value: string | Date) {
   const d = typeof value === 'string' ? new Date(value) : value;
   return d.toLocaleString('es-CO', {
@@ -108,7 +101,6 @@ function ensureToken(): string | null {
   return jwt;
 }
 
-// load
 async function loadAreas() {
   error.value = null;
   const jwt = ensureToken();
@@ -116,7 +108,7 @@ async function loadAreas() {
 
   isLoading.value = true;
   try {
-    const res = await fetch('http://localhost:3000/support-areas', {
+    const res = await apiFetch('/support-areas', {
       headers: {
         Authorization: `Bearer ${jwt}`,
       },
@@ -135,7 +127,6 @@ async function loadAreas() {
   }
 }
 
-// abrir crear
 function openCreateModal() {
   closeMenu();
   editingArea.value = null;
@@ -147,7 +138,6 @@ function openCreateModal() {
   showModal.value = true;
 }
 
-// abrir editar
 function openEditModal(area: SupportArea) {
   closeMenu();
   editingArea.value = area;
@@ -159,14 +149,12 @@ function openEditModal(area: SupportArea) {
   showModal.value = true;
 }
 
-// cerrar modal
 function closeModal() {
   showModal.value = false;
   editingArea.value = null;
   formError.value = null;
 }
 
-// guardar
 async function handleSubmit() {
   const name = form.value.name.trim();
   if (!name) {
@@ -182,10 +170,9 @@ async function handleSubmit() {
 
   try {
     if (!editingArea.value) {
-      const res = await fetch('http://localhost:3000/support-areas', {
+      const res = await apiFetch('/support-areas', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${jwt}`,
         },
         body: JSON.stringify({
@@ -201,10 +188,9 @@ async function handleSubmit() {
       const created = await res.json();
       areas.value.push(created);
     } else {
-      const res = await fetch(`http://localhost:3000/support-areas/${editingArea.value.id}`, {
+      const res = await apiFetch(`/support-areas/${editingArea.value.id}`, {
         method: 'PATCH',
         headers: {
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${jwt}`,
         },
         body: JSON.stringify({
@@ -233,17 +219,15 @@ async function handleSubmit() {
   }
 }
 
-// activar / desactivar
 async function toggleActive(area: SupportArea) {
   closeMenu();
   const jwt = ensureToken();
   if (!jwt) return;
 
   try {
-    const res = await fetch(`http://localhost:3000/support-areas/${area.id}`, {
+    const res = await apiFetch(`/support-areas/${area.id}`, {
       method: 'PATCH',
       headers: {
-        'Content-Type': 'application/json',
         Authorization: `Bearer ${jwt}`,
       },
       body: JSON.stringify({
@@ -266,13 +250,11 @@ async function toggleActive(area: SupportArea) {
   }
 }
 
-// confirmar eliminar
 function confirmSoftDelete(area: SupportArea) {
   closeMenu();
   deleteTarget.value = area;
 }
 
-// eliminar
 async function softDelete() {
   if (!deleteTarget.value) return;
   const jwt = ensureToken();
@@ -280,7 +262,7 @@ async function softDelete() {
 
   isDeleting.value = true;
   try {
-    const res = await fetch(`http://localhost:3000/support-areas/${deleteTarget.value.id}`, {
+    const res = await apiFetch(`/support-areas/${deleteTarget.value.id}`, {
       method: 'DELETE',
       headers: {
         Authorization: `Bearer ${jwt}`,

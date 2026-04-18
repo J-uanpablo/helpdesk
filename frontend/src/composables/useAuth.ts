@@ -13,6 +13,8 @@ const user = ref<AuthUser | null>(null);
 const isAuthLoading = ref(false);
 const authError = ref<string | null>(null);
 
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? '';
+
 // Cargar token/usuario desde localStorage cuando arranca la app
 function initAuth() {
   if (typeof window === 'undefined') return;
@@ -62,7 +64,7 @@ async function login(email: string, password: string) {
   isAuthLoading.value = true;
 
   try {
-    const res = await fetch('http://localhost:3000/auth/login', {
+    const res = await fetch(`${API_BASE_URL}/auth/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

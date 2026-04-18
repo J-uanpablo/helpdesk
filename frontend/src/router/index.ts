@@ -35,7 +35,6 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/ClientTicketChatView.vue'),
         meta: { title: 'Ticket – Chat' },
       },
-      // (Opcional) compatibilidad con ruta vieja
       {
         path: 'nuevo',
         redirect: { name: 'cliente-nuevo' },
@@ -50,7 +49,21 @@ const routes: RouteRecordRaw[] = [
     path: '/soporte',
     component: HelpdeskLayout,
     meta: { requiresAuth: true, title: 'Mesa de ayuda – Chat' },
-    children: [{ path: '', name: 'soporte', component: HelpdeskPanel }],
+    children: [
+      { path: '', name: 'soporte', component: HelpdeskPanel },
+
+      // ✅ Dashboard operativo para admin y super-admin
+      {
+        path: 'operations-dashboard',
+        name: 'AdminOperationsDashboard',
+        component: () => import('../views/AdminOperationsDashboardView.vue'),
+        meta: {
+          requiresAuth: true,
+          adminOnly: true,
+          title: 'Dashboard Operativo',
+        },
+      },
+    ],
   },
 
   /* ===========================
@@ -113,6 +126,11 @@ function isStaff(roles: string[] | undefined | null): boolean {
   return list.includes('admin') || list.includes('support') || list.includes('super-admin');
 }
 
+function isAdminLevel(roles: string[] | undefined | null): boolean {
+  const list = roles || [];
+  return list.includes('admin') || list.includes('super-admin');
+}
+
 router.beforeEach((to, from, next) => {
   const { token, user, initAuth } = useAuth();
 
@@ -125,7 +143,9 @@ router.beforeEach((to, from, next) => {
   const roles = user.value?.roles || [];
 
   // 🔐 requiere auth
-  if (to.meta.requiresAuth && !jwt) return next({ name: 'login' });
+  if (to.meta.requiresAuth && !jwt) {
+    return next({ name: 'login' });
+  }
 
   // 🔐 si estoy logueado y voy a /login
   if (to.name === 'login' && jwt && user.value) {
@@ -135,6 +155,13 @@ router.beforeEach((to, from, next) => {
   // 🔐 /soporte solo staff
   if (to.matched.some(r => r.path === '/soporte') && jwt && user.value && !isStaff(roles)) {
     return next({ name: 'cliente' });
+  }
+
+  // 🔐 rutas con adminOnly => admin o super-admin
+  if (to.matched.some(r => r.meta?.adminOnly) && jwt && user.value) {
+    if (!isAdminLevel(roles)) {
+      return next({ name: 'soporte' });
+    }
   }
 
   // 🔐 /admin solo super-admin

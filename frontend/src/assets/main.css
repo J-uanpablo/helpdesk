@@ -3,15 +3,20 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  --bg-main: #050b1a;
-  --bg-panel: rgba(2, 6, 23, 0.75);
-  --bg-soft: rgba(15, 23, 42, 0.7);
-  --border-main: rgba(51, 65, 85, 0.8);
-  --text-main: #f8fafc;
-  --text-soft: #94a3b8;
+  --bg-main: #f8fafc;
+  --bg-panel: #ffffff;
+  --bg-soft: #f8fafc;
+  --border-main: #dbe4ee;
+  --text-main: #0f172a;
+  --text-soft: #475569;
   --text-muted: #64748b;
+
+  --input-bg: #ffffff;
+  --ticket-selected-bg: rgba(16, 185, 129, 0.1);
+  --ticket-unassigned-bg: rgba(245, 158, 11, 0.1);
+  --message-other-bg: #ffffff;
 }
 
 .theme-dark {
