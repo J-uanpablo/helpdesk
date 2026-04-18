@@ -296,6 +296,7 @@ interface TicketSummary {
   status: string;
   createdAt?: string;
   updatedAt?: string;
+  closedAt?: string;
 
   requesterName?: string | null;
 
